@@ -3,7 +3,7 @@
 ## 1. Status
 
 - **Version 1.3, 2026-10-25.** v1.3 applies a GPT-5 Codex review (7 findings, 6 accepted, see C12): candidates validated like citations, evidence events resolved by code, a counterfactual derive on the key category, one `ToolMessage` helper, `occurred_at` required, dev IDs corrected. v1.2 applied an independent fresh-context Claude review (12 findings, all accepted): finalize is a fresh single-turn call, linked return fees derive from their payment, `max_tokens` raised, eval scores the raw model output, `fact_gap` only on bad IDs, the `exhausted` node is gone, `GraphState` trimmed to what this plan produces. v1.1 cut files from 20 to 9 and added the CLI. v1.0 same day.
-- Implements the "tools + Account Agent" part of Day 1 in the brief (v0.7, §7), against architecture.md v0.5 (sequential agents, D0–D9).
+- Implements the "tools + Account Agent" part of Day 1 in the brief (v0.7, §7), against docs/architecture.md v0.5 (sequential agents, D0–D9).
 - Step 0 copies this file to `tasks/account-agent.md`.
 - **Build order, answered:** specialists first, orchestrator later. The Account Agent goes first because the Policy Agent needs its output (`policy_date`) and because it owns the five tools and the disputed-event pick everything else depends on. No orchestrator graph is built.
 
@@ -113,7 +113,7 @@ All CREATE. Any other file: stop and ask.
 | `tests/test_account_agent.py` | Loader, tools, derive (12 dev scenarios), loop with fakes |
 | `tasks/account-agent.md` | This plan |
 
-**Read first:** `architecture.md` §3a, "Graph state", "Who owns each output field"; `docs/data_contract.md` "events.xlsx", "Agent output"; `data/README.md` "Labeling conventions", "Policy assumptions".
+**Read first:** `docs/architecture.md` §3a, "Graph state", "Who owns each output field"; `docs/data_contract.md` "events.xlsx", "Agent output"; `data/README.md` "Labeling conventions", "Policy assumptions".
 
 ## 5. Closed decisions (do not re-litigate)
 

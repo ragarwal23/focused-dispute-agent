@@ -159,6 +159,29 @@ def test_derive_no_findings(ds):
     assert d.fact_gap is True and d.payment_state == "not_found" and d.policy_date_basis == "complaint_date"
 
 
+def test_derive_other_account_match_must_be_off_account(ds):
+    def oam(*ids):
+        return AccountFindings(relevant_event_ids=[], disputed_event_id=None, notes_summary="", summary="",
+                               other_account_matches=[OtherAccountMatch(event_id=i, account_id="A-1008", why="x") for i in ids])
+    assert derive_states(oam("E-0109", "E-9999"), "missing_payment", "A-1006", ds).other_account_match is False  # own event, unknown
+    assert derive_states(oam("E-0135"), "missing_payment", "A-1007", ds).other_account_match is True
+
+
+def test_derive_noisy_claims_set_gap_without_a_disputed_event(ds):
+    """Why the claimed_but_not_found spec matters: any entry, however vague, sets fact_gap when nothing is disputed."""
+    s = ds.scenarios["S-15"]
+    f = oracle_findings(s).model_copy(update={"claimed_but_not_found": ["a rep note of the call"]})
+    assert derive_states(f, s.expected_category, s.account_id, ds).fact_gap is True
+
+
+def test_score_failed_finalize_is_not_right(ds):
+    from dispute_agent.__main__ import score
+    s = ds.scenarios["S-06"]
+    out = {"findings": None, "tool_calls_made": 2, "budget_hit": False, "tool_errors": ["finalize failed"]}
+    c = score(s, s.expected_category, out, derive_states(None, s.expected_category, s.account_id, ds), ds)
+    assert not any(c[k] for k in ("disputed_ok", "required_found", "forbidden_clear", "payment_ok", "refund_ok", "gap_ok", "oam_ok"))
+
+
 # --- the loop with fakes -------------------------------------------------------------------
 
 

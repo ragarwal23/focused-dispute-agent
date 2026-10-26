@@ -3,7 +3,7 @@
 ## 1. Status
 
 - **Version 1.1, 2026-10-23.** v1.1 cuts the plan to the spec doc only; v1.0 also planned the code.
-- Implements the "data contract" line of Day 1 in [the brief](../auto_finance_payment_dispute_project_brief.md) (v0.4, section 7).
+- Implements the "data contract" line of Day 1 in [the brief](../docs/project_brief.md) (v0.4, section 7).
 - The repo contains only the brief.
 
 ## 2. Why & goal
@@ -75,7 +75,7 @@ Then Rachit reviews and approves the doc in chat. His approval is the real pass 
 |---|---|---|
 | `docs/data_contract.md` | CREATE | The contract Rachit reviews and builds his sheets from. |
 
-**Read first:** [the brief](../auto_finance_payment_dispute_project_brief.md), sections 3, 5 and 6.
+**Read first:** [the brief](../docs/project_brief.md), sections 3, 5 and 6.
 
 ## 5. Closed decisions (do not re-litigate)
 

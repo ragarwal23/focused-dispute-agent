@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 
 import openpyxl
 from langchain_core.tools import BaseTool, InjectedToolArg, tool
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 # --- fixed value lists (data contract, "Conventions") ---------------------------------
 
@@ -105,9 +105,10 @@ class Scenario(BaseModel):
     expected_payment_state: PaymentState
     expected_refund_state: RefundState
     expected_existing_case_id: str | None = None
+    expected_policy_ids: list[str] = Field(min_length=1)
     rationale: str
 
-    @field_validator("expected_required_event_ids", "expected_forbidden_event_ids", mode="before")
+    @field_validator("expected_required_event_ids", "expected_forbidden_event_ids", "expected_policy_ids", mode="before")
     @classmethod
     def _lists(cls, v: Any) -> list[str]:
         return _split_ids(v)

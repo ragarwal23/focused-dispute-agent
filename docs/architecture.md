@@ -1,8 +1,8 @@
 # Architecture
 
-**v0.5 | October 25, 2026** | Built from [the brief](auto_finance_payment_dispute_project_brief.md) v0.7 and [the data contract](docs/data_contract.md) v1.1. Brief v0.7 matches this document.
+**v0.5 | October 25, 2026** | Built from [the brief](project_brief.md) v0.7 and [the data contract](data_contract.md) v1.1. Brief v0.7 matches this document.
 
-![Engineering architecture](docs/diagrams/architecture.png)
+![Engineering architecture](diagrams/architecture_v0.4.png)
 
 > **v0.5:** The two agents now run **in sequence**, Account then Policy, because policy retrieval needs the disputed event's date and only the Account Agent knows it (D0). With the date known before retrieval, sync's re-requests have nothing left to fix, so they are gone and sync is a code-only cross-check. The gate's policy rules are now **our own Python checks for P1–P7**, keyed by policy section ID. The LLM's structured rules are advisory: they feed citations, the case note and the ambiguity flag, never the gate's logic (D7). **Ambiguity is split:** unclear policy goes to `manual_escalation`; unclear or missing facts go to `need_more_evidence` (D9). The route is the action; there is no separate action field (D8). D0 and D2 revised, D7–D9 added. Brief updated to v0.7.
 >
@@ -139,7 +139,7 @@ flowchart TD
 
 ## 4. Deterministic Policy & Authorization Gate — code, no LLM
 
-**The rule set is ours, not the LLM's.** Policy assumptions P1–P7 (see [data/README.md](data/README.md)) are written as Python checks, each keyed by the policy section ID that states it. The mapping from checks to section IDs is in [data/policies/README.md](data/policies/README.md). The gate takes only the cited section IDs from the draft, never the LLM's interpretation of them (D7).
+**The rule set is ours, not the LLM's.** Policy assumptions P1–P7 (see [data/README.md](../data/README.md)) are written as Python checks, each keyed by the policy section ID that states it. The mapping from checks to section IDs is in [data/policies/README.md](../data/policies/README.md). The gate takes only the cited section IDs from the draft, never the LLM's interpretation of them (D7).
 
 Each check reads structured event fields only (type, timestamps, amounts, links), never memo or note text. It returns `true`, `false` or `unknown`, where `unknown` means the evidence lives only in a note or the check doesn't apply. Only `true` rules a route out. `need_more_evidence` and `manual_escalation` are never ruled out.
 
@@ -161,7 +161,7 @@ Checks, in order:
 4. The route is an **allowed value**.
 5. **Duplicate rule:** an `open` case with the same account, category and disputed event means no new case.
 
-**Policy ambiguity goes to a human.** If a cited rule carries the policy-ambiguity flag, or a cited section is not in the gate's registry (every current section is registered to a check or marked procedural; see [data/policies/README.md](data/policies/README.md)), the gate does not guess. It routes to `manual_escalation` with the reason. **Fact ambiguity is not the gate's to escalate:** `need_more_evidence` is the right route for it, and the gate leaves that alone (D9, S-15).
+**Policy ambiguity goes to a human.** If a cited rule carries the policy-ambiguity flag, or a cited section is not in the gate's registry (every current section is registered to a check or marked procedural; see [data/policies/README.md](../data/policies/README.md)), the gate does not guess. It routes to `manual_escalation` with the reason. **Fact ambiguity is not the gate's to escalate:** `need_more_evidence` is the right route for it, and the gate leaves that alone (D9, S-15).
 
 **On rejection:** the route becomes `manual_escalation`, the output keeps the LLM's original citations and note, and `gate_rejected: true` is added with the reasons (D6). The LLM is not asked to try again. The flag lets the evals tell "the agent escalated correctly" from "the gate rescued it".
 
