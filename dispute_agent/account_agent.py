@@ -94,7 +94,7 @@ When you have what you need, stop calling tools and write a short plain summary:
 
 FINALIZE_SYSTEM = "You convert an investigation transcript into structured findings. Use only event IDs that appear in tool results in the transcript."
 
-FINALIZE_INSTRUCTION = """Fill in the findings from the transcript above. Leave disputed_event_id null if nothing fits or more than one record fits, and list the candidates instead. If the transaction the customer says happened is not on file, leave disputed_event_id null; do not substitute its consequence, such as a fee or a late status. Never put another account's event under relevant_event_ids; list it under other_account_matches only if the transcript says it may be this customer's payment on the wrong account. List under claimed_but_not_found only transactions the customer says happened that are not on file."""
+FINALIZE_INSTRUCTION = """Fill in the findings from the transcript above. Leave disputed_event_id null if nothing fits or more than one record fits, and list the candidates instead. If the customer says they made a payment and no record of that payment is on this account, leave disputed_event_id null; do not substitute its consequence, such as a fee or a late status. If the transaction is on file at an earlier stage, such as a refund requested but never issued, that record is the disputed one. Never put another account's event under relevant_event_ids; list it under other_account_matches only if the transcript says it may be this customer's payment on the wrong account. List under claimed_but_not_found only transactions the customer says happened that are not on file."""
 
 
 # --- the agent graph -----------------------------------------------------------------------------
