@@ -2,7 +2,7 @@
 
     python -m dispute_agent show [A-1002]
     python -m dispute_agent ask A-1002 "cust got hit w a late fee ... conf # ends in 8812"
-    python -m dispute_agent eval [--split dev] [--scenario S-01] [--min-disputed-acc 0.75] [--min-policy-recall 0.75]
+    python -m dispute_agent eval [--split dev] [--scenario S-01] [--min-disputed-acc 0.75] [--min-policy-recall 0.75] [--min-route-acc 0.75]
 """
 
 from __future__ import annotations
@@ -100,17 +100,22 @@ def cmd_ask(args: argparse.Namespace) -> int:
         print(f"unknown account {args.account_id}; known: {', '.join(sorted(ds.accounts))}")
         return 2
     sections = load_policies(Path(args.data) / "policies")
-    category, account, derived, policy = investigate(
+    inv = investigate(
         ds, sections, build_account_agent(ds), args.account_id, args.message,
         tags=["slice=investigate", "cli"], label=args.account_id,
     )
+    account, policy, g = inv.account, inv.policy, inv.gate
 
-    print(f"category: {category}\n")
+    print(f"category: {inv.category}\n")
     _print_tool_calls(account, args.quiet)
     print("\nfindings:")
     print(json.dumps(account["findings"].model_dump() if account["findings"] else None, indent=2))
+    print(
+        f"tool_calls_made={account['tool_calls_made']} budget_hit={account['budget_hit']} "
+        f"tool_errors={account['tool_errors']}"
+    )
     print("\nderived (code):")
-    print(json.dumps(derived_json(derived), indent=2))
+    print(json.dumps(derived_json(inv.derived), indent=2))
     print("\npolicy retrieved (ranked):")
     for r in policy.retrieved:
         s, via = r.section, f" via {r.via}" if r.via else ""
@@ -118,16 +123,31 @@ def cmd_ask(args: argparse.Namespace) -> int:
     print("\npolicy rules:")
     for rule in policy.rules:
         print(f"{rule.section_id} {rule.outcome} ambiguous={rule.policy_ambiguous} {rule.why}")
-    print(f"\npolicy errors={policy.errors} dropped={policy.dropped_section_ids}")
-    print(
-        f"\ntool_calls_made={account['tool_calls_made']} budget_hit={account['budget_hit']} "
-        f"tool_errors={account['tool_errors']}"
-    )
+    print(f"policy errors={policy.errors} dropped={policy.dropped_section_ids}")
+
+    issues = "; ".join(inv.sync.issues) or "no issues"
+    print(f"\nsync (code): {issues}  lean={inv.sync.lean}  account attempts: {inv.account_attempts}")
+    print("\ndraft (LLM):")
+    if inv.synthesis.draft:
+        print(json.dumps(inv.synthesis.draft.model_dump(), indent=2))
+    else:
+        print(f"none: {inv.synthesis.errors}")
+
+    print("\ngate (code):")
+    print(f"route={g.route} gate_rejected={g.gate_rejected} reasons={g.gate_reasons} existing_case_id={g.existing_case_id}")
+    print("checks:         " + "  ".join(f"{k}={v}" for k, v in g.check_results.items()))
+    cited = []
+    for c in g.section_checks:
+        line = f"{c.section_id} {c.check}" + (f"={c.result}" if c.result else "")
+        cited.append(line + (f" rules out {c.rules_out}" if c.rules_out else ""))
+    print("cited sections: " + (" · ".join(cited) or "none"))
     return 0
 
 
 def cmd_eval(args: argparse.Namespace) -> int:
-    return run_eval(args.data, args.split, args.scenario, args.min_disputed_acc, args.min_policy_recall)
+    return run_eval(
+        args.data, args.split, args.scenario, args.min_disputed_acc, args.min_policy_recall, args.min_route_acc
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -145,6 +165,7 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--scenario", help="one scenario ID, e.g. S-01")
     ev.add_argument("--min-disputed-acc", type=float, default=0.0)
     ev.add_argument("--min-policy-recall", type=float, default=0.0)
+    ev.add_argument("--min-route-acc", type=float, default=0.0)
     args = p.parse_args(argv)
     return {"show": cmd_show, "ask": cmd_ask, "eval": cmd_eval}[args.cmd](args)
 

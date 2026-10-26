@@ -9,7 +9,7 @@ from dispute_agent.account_agent import AccountFindings
 from dispute_agent.data import Scenario
 from dispute_agent.derive import derive_states
 from dispute_agent.policy_agent import (
-    PolicyReading, RuleReading, candidates, check_citations, run_policy_agent, search_policy,
+    POLICY_SYSTEM, PolicyReading, RuleReading, candidates, check_citations, run_policy_agent, search_policy,
 )
 from test_derive import DEV_IDS
 
@@ -93,3 +93,11 @@ def test_run_and_errors(ds, sections):
     bad = FakeModel(RuntimeError("boom"))
     result = run_policy_agent(sections, s.expected_category, s.rep_message, account, derived, bad)
     assert result.errors == ["interpret failed: RuntimeError: boom"]
+
+
+def test_ambiguity_rule_is_narrow():
+    """Live runs flagged sections that merely did not cover the case, or business-day counts the gate computes."""
+    assert "can be read two ways that lead to different outcomes" in POLICY_SYSTEM
+    assert "does not cover this situation is not ambiguous" in POLICY_SYSTEM
+    assert "drops a condition the text states" in POLICY_SYSTEM
+    assert "date arithmetic" in POLICY_SYSTEM and "never ambiguity" in POLICY_SYSTEM

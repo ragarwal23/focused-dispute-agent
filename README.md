@@ -18,7 +18,10 @@ The steps run in this order for every complaint. "Code" means plain Python with 
 | Account Agent: investigate the account, propose the disputed event | LLM + 5 read-only tools | [`account_agent.py`](dispute_agent/account_agent.py), tools in [`tools.py`](dispute_agent/tools.py) |
 | Derive states: check the agent's answer, work out payment/refund state and the policy date | Code | [`derive.py`](dispute_agent/derive.py) |
 | Policy Agent: find the policy in force on that date, read it into rules with citations | Code search + LLM, one call | [`policy_agent.py`](dispute_agent/policy_agent.py) |
-| Sync, synthesize, gate, create review case | Not built yet | |
+| Sync: confirm both agents' results line up; send the run back through the Account Agent once if it returned nothing | Code | [`sync.py`](dispute_agent/sync.py), loop in [`pipeline.py`](dispute_agent/pipeline.py) |
+| Synthesize: write the draft the rep reads (route, cited events and sections, confidence, open questions, note) | LLM, one call | [`synthesize.py`](dispute_agent/synthesize.py) |
+| Gate: our P1–P7 checks on the draft's route, cited IDs, policy dates and duplicates | Code | [`gate.py`](dispute_agent/gate.py) |
+| Create review case, and the LangGraph orchestrator graph | Not built yet | |
 
 Supporting files:
 
@@ -51,6 +54,6 @@ cp .env.example .env   # add your Anthropic and LangSmith keys
 python -m dispute_agent show             # list accounts (no LLM)
 python -m dispute_agent show A-1002      # one account's events, notes and cases (no LLM)
 python -m dispute_agent ask A-1002 "cust got hit w a late fee on oct but says he paid over the phone last tues"
-python -m dispute_agent eval --split dev --min-disputed-acc 0.75 --min-policy-recall 0.75
+python -m dispute_agent eval --split dev --min-disputed-acc 0.75 --min-policy-recall 0.75 --min-route-acc 0.75
 pytest
 ```
