@@ -2,9 +2,7 @@
 
 **v0.5.1 | October 25, 2026** | Built from [the brief](project_brief.md) v0.7 and [the data contract](data_contract.md) v1.2. Brief v0.7 matches this document.
 
-![Engineering architecture](diagrams/architecture_v0.4.png)
-
-*The picture is from v0.4 and still shows the agents running in parallel with re-request loops. The [graph below](#the-graph) is current: the agents run in sequence and nothing loops.*
+![Engineering architecture](diagrams/architecture_v0.5.png)
 
 ---
 
