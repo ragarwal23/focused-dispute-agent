@@ -51,7 +51,7 @@ Every current section is registered, either to one of our Python checks or as pr
 
 ## Expected policy citations per scenario
 
-A proposed `expected_policy_ids` column for `scenarios.xlsx`, the minimum a correct answer cites. **Forbidden for every scenario:** any `LF.v2.*` or `EX.v1.*` section.
+The `expected_policy_ids` column in `scenarios.xlsx` is the minimum a correct answer cites. **Forbidden for every scenario:** any `LF.v2.*` or `EX.v1.*` section. Retrieval follows cross-references one hop after ranking.
 
 | Scenario | Route | Required sections | Why those sections decide it |
 |---|---|---|---|

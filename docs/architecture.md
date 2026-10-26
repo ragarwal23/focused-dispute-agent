@@ -1,6 +1,6 @@
 # Architecture
 
-**v0.5 | October 25, 2026** | Built from [the brief](project_brief.md) v0.7 and [the data contract](data_contract.md) v1.1. Brief v0.7 matches this document.
+**v0.5.1 | October 25, 2026** | Built from [the brief](project_brief.md) v0.7 and [the data contract](data_contract.md) v1.2. Brief v0.7 matches this document.
 
 ![Engineering architecture](diagrams/architecture_v0.4.png)
 
@@ -96,15 +96,15 @@ flowchart TD
 
 | Step | Owner | How |
 |---|---|---|
-| **Retrieve** | Code | `search_policy` filters sections by category and by `policy_date`, drops superseded versions, then ranks what's left by relevance to the complaint (D2) |
+| **Retrieve** | Code | `search_policy` filters sections by category and `policy_date`, BM25-ranks the complaint-only query, keeps the top 10, then follows one-hop cross-references (D2) |
 | **Interpret** | LLM | One call reads the retrieved sections and turns each relevant one into a structured rule |
-| **Cite** | LLM, code checks | Every rule carries its section ID and effective dates; sync and the gate both check them |
+| **Cite** | LLM, code checks | Every rule carries its section ID; dates stay in the retrieved store and are looked up by code |
 
 | Tool | Returns | Notes |
 |---|---|---|
 | `search_policy` | Ranked policy sections for the category that were in force on `policy_date` | Filter first, then rank. Embeddings don't understand dates, so the date filter always runs first |
 
-**Each structured rule has:** the condition it applies to, what it allows, its citation, its effective dates, and a **policy-ambiguity** flag with a reason when the policy text doesn't clearly settle the case.
+**Each structured rule has:** the condition it applies to, a five-value outcome (`fee_adjustment_review`, `refer_to_supervisor`, `ask_customer`, `explains_outcome`, or `procedural`), its citation, and a **policy-ambiguity** flag with a reason when the policy text doesn't clearly settle the case.
 
 **The rules are advisory.** They feed the citations, the case note and the policy-ambiguity flag. The gate does not evaluate them; it runs its own checks (section 4, D7).
 

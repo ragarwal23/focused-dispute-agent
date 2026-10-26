@@ -6,7 +6,7 @@ A LangGraph agent that investigates a customer's payment dispute and drafts a re
 
 | Path | What's in it |
 |---|---|
-| [`dispute_agent/`](dispute_agent/) | The agent code: data loader, Account Agent, CLI |
+| [`dispute_agent/`](dispute_agent/) | Data loader, Account and Policy Agent packages, CLI |
 | [`tests/`](tests/) | Pytest suite |
 | [`data/`](data/) | Synthetic accounts, events, review cases, eval scenarios and [policy documents](data/policies/) |
 | [`docs/`](docs/) | [Project brief](docs/project_brief.md), [architecture](docs/architecture.md), [data contract](docs/data_contract.md), diagrams |
@@ -23,6 +23,6 @@ cp .env.example .env   # add your Anthropic and LangSmith keys
 python -m dispute_agent show             # list accounts (no LLM)
 python -m dispute_agent show A-1002      # one account's events, notes and cases (no LLM)
 python -m dispute_agent ask A-1002 "cust got hit w a late fee on oct but says he paid over the phone last tues"
-python -m dispute_agent eval --split dev
+python -m dispute_agent eval --split dev --min-disputed-acc 0.75 --min-policy-recall 0.75
 pytest
 ```

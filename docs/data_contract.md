@@ -1,12 +1,12 @@
 # Data Contract
 
-**v1.1 | October 23, 2026 | Status: approved**
+**v1.2 | October 25, 2026 | Status: approved**
 
 *v1.1: adds the optional `vehicle` column to accounts, names the fictional lender, and pins down what `occurred_at` means for scheduled and received payments.*
 
 This is the blank form every piece of synthetic data must fit. It names the four Excel files, the columns in each, which values are allowed, and the rules that tie the files together. The agent's tools, the validator and the evaluators will all read data in exactly this shape.
 
-Policy documents are not covered yet (see the last section).
+Policy documents are versioned Markdown files in `data/policies/`; their front matter supplies effective dates and categories.
 
 ## Conventions
 
@@ -175,13 +175,14 @@ The eval cases. Each row is one complaint plus the answer key.
 | `expected_payment_state` | yes | Payment state | Use `not_applicable` when no payment is in question |
 | `expected_refund_state` | yes | Refund state | Use `not_applicable` when no refund is in question |
 | `expected_existing_case_id` | no | text | Filled = this is a duplicate. The agent must return this case and create nothing. Blank = the agent must create a new case |
+| `expected_policy_ids` | yes | list | Minimum policy section IDs the Policy Agent must cite. At least one |
 | `rationale` | yes | text | One or two sentences on why this is the right answer |
 
 *Illustration, not data:*
 
-| scenario_id | split | account_id | rep_message | wording | note_driven | trap | expected_category | expected_route | expected_required_event_ids | expected_forbidden_event_ids | expected_disputed_event_id | expected_payment_state | expected_refund_state | expected_existing_case_id | rationale |
+| scenario_id | split | account_id | rep_message | wording | note_driven | trap | expected_category | expected_route | expected_required_event_ids | expected_forbidden_event_ids | expected_disputed_event_id | expected_payment_state | expected_refund_state | expected_existing_case_id | expected_policy_ids | rationale |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| S-07 | dev | A-101 | cust says sept pmt bounced but her bank shows it cleared?? | messy | FALSE | none | returned_reversed_payment | explain_events | E-012, E-014 | | E-014 | returned | not_applicable | | Bank returned the Sept 5 payment with R01; the record is clear and the rep can explain it. |
+| S-07 | dev | A-101 | cust says sept pmt bounced but her bank shows it cleared?? | messy | FALSE | none | returned_reversed_payment | explain_events | E-012, E-014 | | E-014 | returned | not_applicable | | RR.v1.s1, RR.v1.s2 | Bank returned the Sept 5 payment with R01; the record is clear and the rep can explain it. |
 
 ## Agent output
 
@@ -233,12 +234,11 @@ The data is valid when every rule below holds.
 16. Every route appears at least 3 times in `dev`.
 17. At least 3 scenarios are `note_driven`.
 18. About half are `messy` (6 to 10 of 16).
+19. Every `expected_policy_ids` entry names a section in `data/policies/` and is not `LF.v2.*` or `EX.v1.*`.
 
-## Deferred to the policy step
+## Deferred
 
-These are left out on purpose and get added when policy is written:
+These are intentionally out of the first policy-agent slice:
 
-- **The policy file.** Its shape (section ID, effective-from and effective-to dates, text) and its content: 4 real docs and 2 traps.
-- **`expected_policy_ids`.** A scenario column for the policy sections the agent must cite.
 - **`policy_timeline_met`.** A fact recording whether the customer met the policy's deadline.
 - **`stale_policy` scenarios.** The trap value already exists, but these scenarios can't be fully labeled until there is a superseded policy version to point at.
