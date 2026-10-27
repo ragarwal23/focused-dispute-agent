@@ -1,16 +1,16 @@
 # Architecture
 
-**v0.5.4 | October 26, 2026** | Built from [the brief](project_brief.md) v0.7 and [the data contract](data_contract.md) v1.2. Brief v0.7 matches this document.
+**v0.6.1 | October 26, 2026** | Built from [the brief](project_brief.md) v0.8 and [the data contract](data_contract.md) v1.2. Brief v0.8 matches this document.
 
-![Engineering architecture](diagrams/architecture_v0.5.png)
+![Engineering architecture](diagrams/architecture_v0.6.png)
 
 ---
 
 ## In one paragraph
 
-A rep pastes a customer's complaint and the account ID. The **orchestrator** is a LangGraph graph with fixed edges: code, not the LLM, decides what runs next. It uses the LLM for two jobs only, naming the dispute type and synthesizing the findings into a draft. The **Account Agent** runs first: it investigates the account and proposes the disputed event, and code derives the payment and refund states from that event's chain. The **Policy Agent** runs second, because it needs that event's date: code retrieves the policy sections in force on that date, and one LLM call turns them into structured rules with citations. A **sync step** in code confirms the two sets of findings line up and marks anything missing as unknown. A **deterministic gate** in plain Python then runs our own checks for each cited policy section against the account's events. If the route contradicts a check, or the policy reading is ambiguous, the route is forced to `manual_escalation`. The agent's only write creates a simulated review case. A **human rep** reads the draft and decides. Adjustments, waivers and refunds happen in the **servicing backend**, which the agent cannot reach.
+A rep pastes a customer's complaint and the account ID. The **orchestrator** is a LangGraph graph: code, not the LLM, decides what runs next. It uses the LLM for two jobs of its own, naming the dispute type and synthesizing the findings into a draft, and sends two specialist agents out **in parallel**. The **Account Agent** investigates the account and proposes the disputed event, and code derives the payment and refund states from that event's chain. The **Policy Agent** retrieves the policy sections in force on the complaint date, and one LLM call turns them into structured rules with citations. A **sync step** in code is the join where both agents report back: it confirms the two sets of findings line up, marks anything missing as unknown, and can send each agent back once, the Account Agent if it returned nothing and the Policy Agent if a different policy set was in force on the disputed event's date. A **deterministic gate** in plain Python then runs our own checks for each cited policy section against the account's events. If the route contradicts a check, or the policy reading is ambiguous, the route is forced to `manual_escalation`. The agent's only write creates a simulated review case. A **human rep** reads the draft and decides. Adjustments, waivers and refunds happen in the **servicing backend**, which the agent cannot reach.
 
-The analogy: a **kitchen ticket system** (LangGraph) that decides the order of work, a **head chef** (the LLM) who only names the dish and plates it, two **line cooks** (the agents) working in order because the second needs the first one's prep, the **pass** (the sync step) where both plates are checked before plating, a **health inspector** who checks every plate against the house rulebook rather than the chef's notes (the gate), and a **customer** who decides whether to eat it (the rep). The kitchen never handles the cash register.
+The analogy: a **kitchen ticket system** (LangGraph) that decides the order of work, a **head chef** (the LLM) who only names the dish and plates it, two **line cooks** (the agents) working at the same time on their own stations, the **pass** (the sync step) where both plates are checked together and a plate can be sent back once, a **health inspector** who checks every plate against the house rulebook rather than the chef's notes (the gate), and a **customer** who decides whether to eat it (the rep). The kitchen never handles the cash register.
 
 ---
 
@@ -19,23 +19,27 @@ The analogy: a **kitchen ticket system** (LangGraph) that decides the order of w
 | # | Layer | Who | Does |
 |---|---|---|---|
 | 1 | **Input** | Rep | Pastes the complaint; the account ID comes from the rep's screen, never guessed |
-| 2 | **Orchestrate** | LangGraph (code), LLM for two calls | Code: fixed order, hold state, route failures, sync. LLM: classify, synthesize the draft |
-| 3 | **Investigate** | LLM + tools, two agents in sequence, then a code sync step | Account Agent reads records and notes and finds the disputed event; Policy Agent retrieves and interprets the rules in force on that event's date; sync cross-checks |
+| 2 | **Orchestrate** | LangGraph (code), LLM for two calls | Code: fan out to both agents, hold state, route failures, sync, the two bounded re-requests. LLM: classify, synthesize the draft |
+| 3 | **Investigate** | LLM + tools, two agents in parallel, then a code sync join | Account Agent reads records and notes and finds the disputed event; Policy Agent retrieves and interprets the rules in force on the complaint date; sync cross-checks both and re-requests at most once each |
 | 4 | **Gate** | Code | Runs our Python policy checks, IDs, dates and duplicates against the draft; policy ambiguity escalates |
 | 5 | **Approve** | Human, then backend | The rep decides; only the secured backend moves money |
 
 ## The graph
 
-Every node runs once, in this order, on every run, with one exception: when sync finds the Account Agent returned no findings, the dashed edge sends the run back through the Account Agent chain once (see 3c). Every other failure is written to state, not branched on. The one decision that overrides the LLM, forcing `manual_escalation`, happens inside the gate and is recorded in `gate_rejected`.
+After classify, the two agents run in parallel and meet at sync, a join node. Sync holds the graph's one routing decision: it can send the Account Agent back once (no findings) and the Policy Agent back once (a different policy set was in force on the disputed event's date), the dashed edges; then the run always continues. Every other failure is written to state, not branched on. The one decision that overrides the LLM, forcing `manual_escalation`, happens inside the gate and is recorded in `gate_rejected`. Built as a `StateGraph` in [pipeline.py](../dispute_agent/pipeline.py); one run is one parent trace.
 
 ```mermaid
 flowchart TD
     START([rep message + account_id]) --> classify["classify<br/><i>LLM</i>"]
     classify --> account_agent["account_agent<br/><i>LLM + 5 read-only tools, ≤6 calls</i>"]
+    classify --> policy_agent["policy_agent<br/><i>code retrieval + LLM interpretation, on the complaint date</i>"]
     account_agent --> derive_states["derive_states<br/><i>code: payment/refund state, policy_date, fact flags</i>"]
-    derive_states --> policy_agent["policy_agent<br/><i>code retrieval + LLM interpretation</i>"]
-    policy_agent --> sync["sync<br/><i>code cross-check</i>"]
-    sync -.->|account findings missing, once| account_agent
+    derive_states --> sync["sync<br/><i>code join + cross-check</i>"]
+    policy_agent --> sync
+    sync -.->|no account findings, once| account_agent_retry["account_agent_retry → derive_states_retry"]
+    account_agent_retry -.-> sync
+    sync -.->|policy set differs on policy_date, once| policy_agent_retry["policy_agent_retry<br/><i>on policy_date, with the facts</i>"]
+    policy_agent_retry -.-> sync
     sync --> synthesize["synthesize<br/><i>LLM</i>"]
     synthesize --> gate["gate<br/><i>code: our P1–P7 checks</i>"]
     gate --> create_review_case["create_review_case<br/><i>code, simulated write</i>"]
@@ -51,16 +55,16 @@ flowchart TD
 | Responsibility | Owner | How |
 |---|---|---|
 | **Classify** | LLM | One call picks one of `late_fee_autopay`, `missing_payment`, `returned_reversed_payment`, `refund_status` |
-| **Delegate** | Code | Sends the account to the Account Agent first. Then sends the category and `policy_date` to the Policy Agent |
+| **Delegate** | Code | Fans out: the account, category and complaint go to the Account Agent, the category and complaint to the Policy Agent, at the same time |
 | **Track state** | Code | One typed state object; each step adds its own fields (see Graph state below) |
 | **Handle failures** | Code | A budget hit, the exact text of a tool error, or "found nothing useful" is recorded in state and the run continues; that finding counts as unknown (D4, D5) |
-| **Sync** | Code | Cross-checks both agents' findings before synthesis. See 3c |
+| **Sync** | Code | Joins both agents' findings, cross-checks them, and may send each agent back once. See 3c |
 | **Synthesize** | LLM | One call with structured output, after sync: route, cited events and policy sections, facts, confidence, open questions, case note |
 | **Hand off** | Code | The draft goes to the gate. The orchestrator never calls the backend |
 
-**Fixed delegation order.** The graph always runs the Account Agent, then the Policy Agent, then sync, then synthesis. Nothing decides at runtime which agents to call, and nothing is asked twice, with one bounded exception: when the Account Agent returns no findings, sync sends the run back through the Account Agent chain once (3c). The precise claim is that the **outer graph shape is fixed**: inside the Account Agent the LLM does choose its own tool calls, from one to six. This is what keeps traces comparable across runs. Decided Oct 24 (D0), revised Oct 25 (v0.4, then v0.5).
+**Fixed graph shape.** The graph always runs classify, both agents in parallel, sync, synthesis, the gate and the write. Nothing decides at runtime which agents to call. Sync may add at most one more run of each agent, by code rules (3c), so a trace has one of four shapes and the two attempt counts say which. The precise claim is that the **outer graph shape is fixed**: inside the Account Agent the LLM does choose its own tool calls, from one to six. Decided Oct 24 (D0), revised Oct 25 (v0.4, then v0.5) and Oct 26 (v0.6, back to the v0.4 shape).
 
-**Why in sequence and not in parallel.** The Policy Agent filters by the effective date of the disputed event, and only the Account Agent produces that event. In parallel, the Policy Agent had to guess a date and sync had to repair the guess with a re-request. In sequence, the date is known before retrieval, so the mismatch cannot happen. The cost is a few seconds of latency on a case a human reads later.
+**Why in parallel.** The two investigations are independent until sync: the Policy Agent needs only the category and the complaint, both known after classify. Reading the policy on the complaint date is right whenever the same policy set was in force on the disputed event's date, which sync checks in code once that date is known; when it was not, one re-retrieve on the right date fixes it (3c). The cost is a first policy read without the account's facts; the rules are advisory (D7), so nothing the gate enforces depends on that read.
 
 ## 3a. Account Agent — LLM with read-only tools, max 6 calls
 
@@ -76,7 +80,7 @@ flowchart TD
 
 **Returns to the orchestrator, as structured findings:** the events it found with both dates; the disputed event it thinks the complaint is about, or **all candidates** if more than one fits and the complaint doesn't say which; any reference matches on other accounts; what it couldn't find; and a budget-hit flag if it ran out of tool calls (D4).
 
-**Then code, before the Policy Agent runs:**
+**Then code, in `derive_states`:**
 
 | Step | How |
 |---|---|
@@ -89,17 +93,17 @@ flowchart TD
 
 ## 3b. Policy Agent — RAG: retrieval plus LLM interpretation
 
-**Finds the policy in force on `policy_date`, works out what it says about this case, and returns it as structured rules.**
+**Finds the policy in force, works out what it says about this case, and returns it as structured rules.** It runs in parallel with the Account Agent, so its first read is on the complaint date (Oct 20, 2026) with no account facts; a re-retrieve (3c) reads on the disputed event's `policy_date` with the facts.
 
 | Step | Owner | How |
 |---|---|---|
-| **Retrieve** | Code | `search_policy` filters sections by category and `policy_date`, BM25-ranks the complaint-only query, keeps the top 10, then follows one-hop cross-references (D2) |
+| **Retrieve** | Code | `search_policy` filters sections by category and the read date, BM25-ranks the complaint-only query, keeps the top 10, then follows one-hop cross-references (D2) |
 | **Interpret** | LLM | One call reads the retrieved sections and turns each relevant one into a structured rule |
 | **Cite** | LLM, code checks | Every rule carries its section ID; dates stay in the retrieved store and are looked up by code |
 
 | Tool | Returns | Notes |
 |---|---|---|
-| `search_policy` | Ranked policy sections for the category that were in force on `policy_date` | Filter first, then rank. Embeddings don't understand dates, so the date filter always runs first |
+| `search_policy` | Ranked policy sections for the category that were in force on the read date | Filter first, then rank. Embeddings don't understand dates, so the date filter always runs first |
 
 **Each structured rule has:** the condition it applies to, a five-value outcome (`fee_adjustment_review`, `refer_to_supervisor`, `ask_customer`, `explains_outcome`, or `procedural`), its citation, and a **policy-ambiguity** flag with a reason when the policy text doesn't clearly settle the case.
 
@@ -111,19 +115,20 @@ flowchart TD
 
 **Returns to the orchestrator:** the structured rules and the section IDs they cite.
 
-## 3c. Sync & cross-validate — code, a LangGraph node
+## 3c. Sync & cross-validate — code, the LangGraph join node
 
-**Both agents' findings are checked together before synthesis.** Neither result reaches synthesis unchecked.
+**Both agents' findings are checked together before synthesis.** Sync waits for both branches; neither result reaches synthesis unchecked.
 
 | Check | On failure |
 |---|---|
-| Both structured results are present | A missing result is recorded as unknown (D5) |
-| Each cited rule's effective window contains `policy_date` | That rule is recorded as unknown. Retrieval already filters on the same date, so a failure here is a bug and shows in the trace |
-| The rules cover the dispute category | Recorded as unknown; synthesis leans to `manual_escalation` |
+| Both structured results are present | A missing result is recorded as unknown (D5); no account findings triggers the clarify re-request |
+| The policy set the Policy Agent read (in force on the complaint date) is the set in force on `policy_date` | `policy_date_mismatch`, which triggers the re-retrieve. Compared as sets of section IDs, so a different date under the same policy costs nothing |
+| Each kept rule's effective window contains `policy_date` | That rule is dropped and recorded as an issue. After a re-retrieve this cannot happen, so a drop here is a bug and shows in the trace |
+| The rules cover the dispute category | Recorded as an issue; synthesis leans to `manual_escalation` |
 
-**One bounded send-back.** If the Account Agent returned no findings at all (its finalize call failed), sync sends the run back: the Account Agent, derive, the Policy Agent and sync run once more, then the run continues whatever the result. This is the one failure a second try can plausibly fix, because the inputs are the same and the failure was the model's. Nothing else is asked again: a budget hit, missing policy, a dropped rule or a category mismatch would come back identical, so those are marked as issues and the run continues to synthesis. Decided Oct 26 (D0 and D5 revised); the Policy Agent's first call ran on no facts, so it is rerun too, one wasted call on the failure path.
+**Two bounded re-requests, each at most once.** *Clarify:* if the Account Agent returned no findings at all (its finalize call failed), it and `derive_states` run once more; the Policy Agent is not rerun, it already ran in parallel. *Re-retrieve:* if a different policy set was in force on the disputed event's date than on the complaint date, the Policy Agent runs once more on `policy_date`, this time with the account's facts. Clarify goes first and re-retrieve on the next pass, so sync runs at most three times; then the run continues whatever the result. These are the two failures a second run can fix. Nothing else is asked again: a budget hit, missing policy, a dropped rule or a category mismatch would come back identical, so those are marked as issues and the run continues to synthesis. On the current data the re-retrieve never fires, since every disputed event is after LF.v3's May 1, 2026 start; an offline test covers it with an earlier date.
 
-**Built as [sync.py](../dispute_agent/sync.py).** `sync` returns the kept rules, the dropped section IDs, four flags (`account_missing`, `policy_missing`, `budget_hit`, `category_covered`), the issues as sentences, and a `lean`: the cautious route the draft should lean to, chosen by the first failing flag in the order missing policy, category not covered, account missing, budget hit. The lean is a sentence in the prompt, never a route set by code. The send-back loop lives in `pipeline.run_agents` (`MAX_ACCOUNT_ATTEMPTS = 2`) and the run records `account_attempts`.
+**Built as [sync.py](../dispute_agent/sync.py).** `sync` is pure: it returns the kept rules, the dropped section IDs, five flags (`account_missing`, `policy_missing`, `policy_date_mismatch`, `budget_hit`, `category_covered`), the issues as sentences, and a `lean`: the cautious route the draft should lean to, chosen by the first failing flag in the order missing policy, category not covered, account missing, budget hit. The lean is a sentence in the prompt, never a route set by code. The re-requests are edges in [pipeline.py](../dispute_agent/pipeline.py) (`after_sync`, `MAX_ATTEMPTS = 2`) through dedicated `*_retry` nodes with plain edges back into sync, because re-entering the fan-out nodes would hit the join barrier and end the run silently. The run records `account_attempts` and `policy_attempts`.
 
 **Then the LLM synthesizes** the draft from the validated findings and the fact flags. **Built as [synthesize.py](../dispute_agent/synthesize.py):** code renders one message with the category, policy date and basis, the complaint, the Account Agent's summary and notes summary, the tool count and errors, the derived facts, the evidence events with memos inside delimiters, the Policy Agent's summary, the kept rules (section, outcome, ambiguity, condition, why) and the sync note with its lean; one Sonnet call with structured output returns the `Draft` the gate checks. The output schema is built per call so `event_ids` and `policy_source_ids` accept only the IDs shown (the evidence events and the kept rules); an unshown or off-account ID cannot be emitted. The draft then reaches the gate unmodified, and the gate re-checks every ID, date and check. The route rules it is given, which the evals also check:
 
@@ -172,7 +177,7 @@ Checks, in order:
 
 | Step | Who | What |
 |---|---|---|
-| **Create review case** | Code | Simulated and idempotent. If an open duplicate exists, it returns that case and creates nothing. Tests in the data: C-001 is closed, so it must not block S-05; C-002 is open, so it must block S-11; C-003 is open in a different category, so it must not block S-13 |
+| **Create review case** | Code | Simulated and idempotent; built as [create_review_case.py](../dispute_agent/create_review_case.py). Runs after the gate on every run, rejection included, and files the case under the final route. If an open duplicate exists, it returns that case and creates nothing. Tests in the data: C-001 is closed, so it must not block S-05; C-002 is open, so it must block S-11; C-003 is open in a different category, so it must not block S-13 |
 | **Drafted case** | Agent output | Route, cited evidence and rules, facts, confidence, open questions, editable 3–5 sentence note |
 | **Human rep approval** | Rep | Reads, edits, files. The rep decides, not the agent |
 | **Servicing backend** | Secured services | Adjustments, waivers, refunds. The agent has no credentials for it, so it cannot move money even if every other layer fails |
@@ -207,12 +212,12 @@ One object travels through the graph. Each step reads it and adds its own fields
 | `derived_states` (`payment_state`, `refund_state`) | Code, after the Account Agent |
 | `policy_date`, `policy_date_basis` | Code, after the Account Agent |
 | `fact_flags` (`fact_gap`, `fact_ambiguous`, `other_account_match`) | Code, after the Account Agent |
-| `policy_findings` (advisory structured rules with condition, what it allows, citation, effective dates, policy-ambiguity flag; exact error text or "nothing useful") | Policy Agent |
-| `sync` (kept rules, dropped sections, the four flags, issues, lean) and `account_attempts` (1, or 2 after the send-back) | Sync |
+| `policy_findings` (advisory structured rules with condition, what it allows, citation, effective dates, policy-ambiguity flag; the read date and its basis; exact error text or "nothing useful") | Policy Agent |
+| `sync` (kept rules, dropped sections, the five flags, issues, lean), `account_attempts` and `policy_attempts` (1, or 2 after a re-request) | Sync |
 | `draft` (route, cited events and sections, confidence, open questions, case note) or the synthesize error | Orchestrator, synthesize |
 | `check_results` (all five checks: `true`, `false` or `unknown`) and `section_checks` (per cited section: its check, verdict and the route ruled out) | Gate |
 | `gate_rejected`, `gate_reasons`, `existing_case_id` | Gate |
-| `case_id`, `created` | Create review case |
+| `case` (`case_id`, `created`, account, category, disputed event, final route) | Create review case |
 
 ---
 
@@ -235,24 +240,27 @@ The answer to "why should a rep trust it?"
 
 ## Models and observability
 
+`python -m dispute_agent trace` checks recent LangSmith graph shapes against the recorded attempt counts. The
+validation-only `DISPUTE_FAULT` switch can exercise each bounded re-request path without changing normal runs.
+
 - **Claude Sonnet 5.5** makes the orchestrator's two LLM calls, classify and synthesize, and runs both agents. LangGraph, not a model, runs the workflow.
 - **Claude Opus 5.5** judges case notes in evals, so the agent isn't graded by the model that wrote the answer.
-- **LangSmith** traces every span. The orchestrator is the parent run; each agent delegation, the sync step and the gate are children, so a failure is traceable to the step that caused it. Runs are tagged with scenario ID, category, trap, wording and note_driven.
+- **LangSmith** traces every span. The graph run `dispute <label>` is the parent; every node (classify, both agents, derive, sync, any retry, synthesize, gate, create_review_case) is a child, so a failure is traceable to the step that caused it and the trace's shape shows whether a re-request fired. Runs are tagged with scenario ID, category, trap, wording and note_driven.
 
 ---
 
 ## Decisions
 
-All decided by Rachit. D0 on Oct 24, 2026; D1–D6 on Oct 25, 2026; D0 and D2 revised Oct 25 (v0.4 and v0.5); D7–D9 on Oct 25 (v0.5). Each row records the alternative that was not chosen, for the interview.
+All decided by Rachit. D0 on Oct 24, 2026; D1–D6 on Oct 25, 2026; D0 and D2 revised Oct 25 (v0.4 and v0.5); D7–D9 on Oct 25 (v0.5); D0, D2 and D5 revised Oct 26 (v0.6, back to the v0.4 shape). Each row records the alternative that was not chosen, for the interview.
 
 | # | Decision | Chosen | Not chosen | Why |
 |---|---|---|---|---|
-| **D0** | Orchestrator delegation order | **Fixed and sequential, in LangGraph.** Account Agent, then Policy Agent, then sync, then synthesize. One bounded send-back: sync reruns the Account Agent chain once when it returned no findings (revised Oct 26) | Parallel fan-out with a sync re-request on the policy date (v0.4); a full v0.4 revert; LLM chooses which agents to call, or loops until satisfied | Policy retrieval needs the disputed event's date, which only the Account Agent produces. Parallel meant guessing the date and repairing the guess. In sequence, every trace has the same outer shape and the latency cost is a few seconds. The one send-back kept from v0.4 is the one a second try can fix; a date re-request never fires once the agents run in order |
+| **D0** | Orchestrator delegation order | **Fixed fan-out in LangGraph: both agents in parallel, then sync, then synthesize.** Sync may send each agent back once, by code rules: the Account Agent on no findings, the Policy Agent on a policy-set mismatch (revised Oct 26, v0.6) | Sequential, Account then Policy (v0.5); an LLM supervisor that chooses which agents to call, or loops until satisfied | Rachit wants a multi-agent system in the v0.4 sense: two specialists under one orchestrator, meeting at a join. In parallel the outer shape is still fixed and code still routes. The first policy read lacks the account's facts, which is acceptable because the rules are advisory (D7), and the one case where the date matters is repaired by the re-retrieve |
 | **D1** | Does `find_events_by_reference` search across accounts? | **Yes, with each result tagged by account** | This account only; or account ID only | Otherwise the S-07 payment keyed to A-1008 can never be found and the wrong-account trap tests nothing |
-| **D2** | Policy retrieval method | **RAG. Code filter by category and `policy_date`, then relevance ranking; one LLM call interprets the sections into advisory structured rules with citations and effective dates.** Vector ranking is a drop-in on Day 2 if time allows | Filter plus free-text rule extraction (v0.3); vector search alone | The date filter always runs first, since embeddings don't understand dates. Revised v0.5: the date comes from the Account Agent, and the rules are advisory (D7) |
+| **D2** | Policy retrieval method | **RAG. Code filter by category and `policy_date`, then relevance ranking; one LLM call interprets the sections into advisory structured rules with citations and effective dates.** Vector ranking is a drop-in on Day 2 if time allows | Filter plus free-text rule extraction (v0.3); vector search alone | The date filter always runs first, since embeddings don't understand dates. Revised v0.6: the first read is on the complaint date; a re-retrieve reads on the disputed event's date with the facts. The rules are advisory (D7) |
 | **D3** | Who sets `payment_state` and `refund_state` | **Account Agent picks the disputed event; code derives both states from its event chain** | LLM sets everything; or both with a gate check | Rules go to code. Removes a class of LLM error. Evals measure a bit less of the LLM |
 | **D4** | Account Agent hits 6 tool calls | **Stop, return findings, set a budget-hit flag** the orchestrator carries into synthesis, leaning to `need_more_evidence` | Stop silently; force escalation | A capped run must not look like a confident run |
-| **D5** | Tool error or empty findings | **Record the exact error text, or "found nothing useful", in state; mark that finding unknown; continue to sync.** No retry of a failed tool call. One exception (revised Oct 26): when the Account Agent returns no findings at all, sync reruns its chain once, then continues regardless | Retry every failure once; abort and escalate; no retry at all (v0.5) | Visible failures produce the right route and show in the trace. Deterministic failures (budget, missing policy) reproduce on retry, so only the model-side one is retried, and the trace shape changes only when that failure happens |
+| **D5** | Tool error or empty findings | **Record the exact error text, or "found nothing useful", in state; mark that finding unknown; continue to sync.** No retry of a failed tool call. Two exceptions, each once (revised Oct 26, v0.6): no account findings reruns the Account Agent; a policy-set mismatch reruns the Policy Agent on the right date | Retry every failure once; abort and escalate; no retry at all (v0.5) | Visible failures produce the right route and show in the trace. Deterministic failures (budget, missing policy) reproduce on retry, so only the two fixable ones are retried, and the trace shape changes only when one of them happens |
 | **D6** | Output after a gate rejection | **Keep the original citations and note; add `gate_rejected: true` and the reasons** | Strip bad citations; minimal escalation only | Lets evals tell "agent escalated correctly" from "gate rescued it" (S-07). Keeps evidence for the failure write-up |
 | **D7** | Where the gate's policy rules come from | **Our own Python checks for P1–P7, keyed by policy section ID. They read structured event fields only and return true, false or unknown** | The gate evaluates the LLM's structured rules (v0.4) | Otherwise the gate checks the LLM against rules the same LLM wrote, and a misreading is enforced faithfully. It also avoids building a rule language for LLM-written conditions |
 | **D8** | What the agent proposes | **Only a route. The route is the action** | A separate `proposed_action` field | The agent's only power is choosing which human queue gets the case. One field to check |
@@ -260,13 +268,15 @@ All decided by Rachit. D0 on Oct 24, 2026; D1–D6 on Oct 25, 2026; D0 and D2 re
 
 ## Deliberately not in v1
 
-- **No parallel fan-out, no runtime agent selection, and no retry loops** beyond the single send-back on missing account findings (D0, D5). A tool error is recorded and the run continues.
+- **No runtime agent selection and no open-ended loops.** The two re-requests are each bounded to one (D0, D5). A tool error is recorded and the run continues.
 - **No third agent.** Classification and synthesis stay inside the orchestrator as one LLM call each; sync and the gate are code nodes, not agents.
 - **No UI, streaming, authentication or real integrations.**
 - **No real money, customers or policy.**
 
 ## Version history
 
+> **v0.6:** Back to the **v0.4 shape** ([plan](plans/orchestrator.md)). The orchestrator is a real LangGraph `StateGraph`: after classify the two agents fan out **in parallel** and meet at sync, a join node, which may send each agent back once (clarify on no account findings, re-retrieve when a different policy set was in force on the disputed event's date). The Policy Agent's first read is on the complaint date without the account's facts. `create_review_case` is built as the last node. The gate, sync's flags and lean, and synthesize's constrained draft keep their v0.5 behaviour. One run is one parent trace. D0, D2 and D5 revised. Brief updated to v0.8.
+>
 > **v0.5.4:** Fixes from the first live run ([plan](plans/live-run-fixes.md)). The draft's ID fields are constrained per call to the IDs shown, after the draft typed `RF.v3.s3` for `RF.v1.s3`. `refund_overdue` reads only the disputed event's chain when there is one, after an older request in the evidence escalated a question about a newer one. A route-rule sentence for claims that only the customer's proof can confirm fixed S-11 but sent S-14 to `need_more_evidence`; it was reverted under the plan's protocol, and S-11 remains the known route miss.
 >
 > **v0.5.3:** Sync and synthesize are built (`sync.py`, `synthesize.py`); `ask` and `eval` now produce a final route through the gate. Sync's cross-check gained a `lean` and one bounded send-back: when the Account Agent returns no findings, its chain runs once more (D0 and D5 revised). The eval scores the final route, confidence consistency and the draft's citations, and prints a route confusion matrix. The PNG diagram still shows v0.5 and is redrawn separately.

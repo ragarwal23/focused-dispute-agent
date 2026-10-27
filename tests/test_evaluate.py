@@ -1,5 +1,10 @@
 """The eval scorer: a failed finalize, the final route vs the draft's route, confidence consistency, the matrix."""
 
+from pathlib import Path
+
+from dispute_agent.evaluate import run_eval
+
+from dispute_agent.create_review_case import create_review_case
 from dispute_agent.derive import derive_states
 from dispute_agent.evaluate import CHECKS, HEADER, confusion_lines, row_line, score
 from dispute_agent.gate import Draft, gate
@@ -19,7 +24,8 @@ def investigation(ds, sections, s, findings, draft, attempts=1):
     synced = sync(account, policy, derived, s.expected_category, sections)
     synthesis = SynthesisResult(draft=draft) if draft else SynthesisResult(errors=["x"])
     g = gate(draft, s.account_id, s.expected_category, derived, policy, sections, ds)
-    return Investigation(s.expected_category, account, derived, policy, synced, synthesis, g, attempts)
+    case = create_review_case(ds, s.account_id, s.expected_category, derived, g)
+    return Investigation(s.expected_category, account, derived, policy, synced, synthesis, g, case, attempts)
 
 
 def test_score_failed_finalize_is_not_right(ds, sections):
@@ -40,7 +46,18 @@ def test_score_route_and_confidence(ds, sections):
     c = score(s, investigation(ds, sections, s, oracle_findings(s), draft), ds)
     assert c["route_ok"] is True and c["confidence_ok"] is False
     assert c["draft_events_ok"] is True and c["draft_policy_ok"] is True and c["gate_rejected"] is False
+    assert c["trajectory_ok"] is True and c["action_ok"] is True
     assert all(c[k] for k in CHECKS if k != "confidence_ok")
+
+
+def test_score_action_against_existing_case(ds, sections):
+    """S-11 has an open duplicate (C-002): the right action is to return it, not create; S-05's closed C-001 must not block."""
+    for sid, created, case_id in (("S-11", False, "C-002"), ("S-05", True, "C-004")):
+        s = ds.scenarios[sid]
+        draft = Draft(review_route=s.expected_route, event_ids=s.expected_required_event_ids,
+                      policy_source_ids=s.expected_policy_ids, confidence="medium", open_questions=["x"], case_note="x")
+        inv = investigation(ds, sections, s, oracle_findings(s), draft)
+        assert inv.case.created is created and inv.case.case_id == case_id and score(s, inv, ds)["action_ok"] is True
 
 
 def test_score_gate_rescue(ds, sections):
@@ -63,3 +80,11 @@ def test_confusion_matrix():
     lines = confusion_lines(rows)
     assert len(lines) == 5 and lines[1].split() == ["adjustment_review", "1", "0", "0", "1"]
     assert lines[3].split() == ["need_more_evidence", "0", "0", "1", "0"]
+
+
+def test_eval_refuses_fault(ds, monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DISPUTE_FAULT", "finalize_once")
+    assert run_eval(str(Path(__file__).resolve().parent.parent / "data"), "dev", None, 0.75, 0.75, 0.75) == 2
+    assert "unset DISPUTE_FAULT before eval" in capsys.readouterr().out
+    assert not (tmp_path / "runs").exists()

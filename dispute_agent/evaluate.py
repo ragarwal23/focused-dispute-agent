@@ -11,6 +11,8 @@ Table columns, left to right:
     rej                               the gate rejected the draft (reported, not summed)
     conf                              confidence consistent: never high on a cautious route; no draft fails
     devt / dpol                       the draft cites the required events and none forbidden / the required sections
+    traj                              trajectory: each agent ran at most twice, tool calls within budget
+    act                               action: a case was created, or the key's existing open case was returned instead
 After the totals: route accuracy and a confusion matrix of expected route (rows) by final route (columns).
 """
 
@@ -24,9 +26,10 @@ from pathlib import Path
 from typing import Any
 
 from .account_agent import build_account_agent
+from .config import TOOL_BUDGET
 from .data import Dataset, Route, Scenario, load_dataset
 from .derive import derive_states, derived_json
-from .pipeline import Investigation, investigate
+from .pipeline import MAX_ATTEMPTS, Investigation, build_graph, investigate
 from .policy_agent import load_policies
 
 HEADER = (
@@ -34,10 +37,12 @@ HEADER = (
     f"| {'cat':<4}{'disp':<5}{'req':<4}{'forb':<5}{'drop':<5}{'pay':<4}{'ref':<4}{'key':<4}"
     f"| {'gap':<4}{'amb':<4}{'oam':<4}| {'calls':<6}{'budget':<7}{'err':<4}"
     f"| {'pret':<5}{'pcite':<6}{'pforb':<6}{'pamb':<5}| {'route':<6}{'rej':<4}{'conf':<5}{'devt':<5}{'dpol':<5}"
+    f"| {'traj':<5}{'act':<4}"
 )
 CHECKS = (  # the pass/fail checks summed in the totals line
     "category_ok", "disputed_ok", "required_found", "forbidden_clear", "payment_ok", "refund_ok", "states_ok_keycat",
     "gap_ok", "ambiguous_ok", "oam_ok", "route_ok", "confidence_ok", "draft_events_ok", "draft_policy_ok",
+    "trajectory_ok", "action_ok",
 )
 FORBIDDEN_POLICY_PREFIXES = ("LF.v2.", "EX.v1.")  # superseded or out-of-scope policy; never a valid citation
 CAUTIOUS_ROUTES = ("need_more_evidence", "manual_escalation")  # confidence must not be high on these
@@ -95,6 +100,10 @@ def score(s: Scenario, inv: Investigation, ds: Dataset) -> dict[str, Any]:
         "draft_events_ok": draft is not None and required <= set(draft.event_ids) and not (forbidden & set(draft.event_ids)),
         "draft_policy_ok": draft is not None and expected_policy <= set(draft.policy_source_ids),
         "synth_errors": inv.synthesis.errors,
+        # the graph's shape and its one write
+        "trajectory_ok": max(inv.account_attempts, inv.policy_attempts) <= MAX_ATTEMPTS and account["tool_calls_made"] <= TOOL_BUDGET,
+        "action_ok": inv.case.created is (s.expected_existing_case_id is None)
+        and (s.expected_existing_case_id is None or inv.case.case_id == s.expected_existing_case_id),
     }
 
 
@@ -109,6 +118,7 @@ def row_line(s: Scenario, c: dict[str, Any]) -> str:
         f"{_mark(c['policy_forbidden_clear']):<6}{c['policy_ambiguous_count']:<5}"
         f"| {_mark(c['route_ok']):<6}{'yes' if c['gate_rejected'] else 'no':<4}{_mark(c['confidence_ok']):<5}"
         f"{_mark(c['draft_events_ok']):<5}{_mark(c['draft_policy_ok']):<5}"
+        f"| {_mark(c['trajectory_ok']):<5}{_mark(c['action_ok']):<4}"
     )
 
 
@@ -131,9 +141,12 @@ def run_eval(
     min_route_acc: float = 0.0,
 ) -> int:
     """Score the split (or one scenario), write runs/eval_<timestamp>.json, return the exit code."""
+    if os.environ.get("DISPUTE_FAULT"):
+        print("unset DISPUTE_FAULT before eval")
+        return 2
     ds = load_dataset(data_dir)
-    agent = build_account_agent(ds)
     sections = load_policies(Path(data_dir) / "policies")
+    graph = build_graph(ds, sections, build_account_agent(ds))
     if scenario_id:
         scenarios = [s for s in ds.scenarios.values() if s.scenario_id == scenario_id]
     else:
@@ -149,7 +162,7 @@ def run_eval(
             f"note_driven={str(s.note_driven).lower()}", "slice=investigate",
         ]
         try:
-            inv = investigate(ds, sections, agent, s.account_id, s.rep_message, tags, s.scenario_id)
+            inv = investigate(ds, sections, None, s.account_id, s.rep_message, tags, s.scenario_id, graph=graph)
         except Exception as exc:
             print(f"{s.scenario_id:<9}EXCEPTION {type(exc).__name__}: {exc}")
             rows.append({"scenario_id": s.scenario_id, "exception": f"{type(exc).__name__}: {exc}"})
@@ -161,6 +174,7 @@ def run_eval(
             "scenario_id": s.scenario_id, "split": s.split, "trap": s.trap, "wording": s.wording,
             "note_driven": s.note_driven, "category_pred": inv.category, "category_expected": s.expected_category,
             "route_expected": s.expected_route, "account_attempts": inv.account_attempts,
+            "policy_attempts": inv.policy_attempts, "case": inv.case.model_dump(),
             "checks": checks,
             "findings": findings.model_dump() if findings else None,
             "derived": derived_json(inv.derived),
@@ -174,9 +188,10 @@ def run_eval(
     scored = [r for r in rows if "checks" in r]
     failures = len(rows) - len(scored) + sum(r["findings"] is None for r in scored)  # exceptions + failed finalizes
     send_backs = sum(r["account_attempts"] > 1 for r in scored)
+    re_retrieves = sum(r["policy_attempts"] > 1 for r in scored)
     totals = {k: sum(bool(r["checks"][k]) for r in scored) for k in CHECKS}
     per_check = "  ".join(f"{k}={v}/{len(scored)}" for k, v in totals.items())
-    print(f"\nscored {len(scored)}/{len(rows)}, {failures} failed, send-backs={send_backs}; {per_check}")
+    print(f"\nscored {len(scored)}/{len(rows)}, {failures} failed, send-backs={send_backs}, re-retrieves={re_retrieves}; {per_check}")
     n = len(scored) or 1
     disputed_acc = totals["disputed_ok"] / n
     policy_recall = sum(bool(r["checks"]["policy_cited_ok"]) for r in scored) / n

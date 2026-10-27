@@ -1,5 +1,8 @@
-"""sync: what is kept, what is dropped, and which issue and lean each failure produces."""
+"""sync: what is kept, what is dropped, which issue and lean each failure produces, and the date-mismatch flag."""
 
+from datetime import datetime
+
+from dispute_agent.config import WORLD_TODAY
 from dispute_agent.policy_agent import PolicyFindings
 from dispute_agent.sync import sync
 from test_policy_agent import facts, rule
@@ -10,8 +13,11 @@ def account_state(findings, budget_hit=False, errors=()):
     return {"findings": findings, "budget_hit": budget_hit, "tool_errors": list(errors), "tool_calls_made": 2, "messages": []}
 
 
-def policy_with(derived, category, *rules, errors=()):
-    return PolicyFindings(policy_date=derived.policy_date, category=category, retrieved=[], rules=list(rules), errors=list(errors))
+def policy_with(derived, category, *rules, errors=(), policy_date=None):
+    """Policy findings read on `policy_date` (default: the derived date, as after a re-retrieve)."""
+    return PolicyFindings(
+        policy_date=policy_date or derived.policy_date, category=category, retrieved=[], rules=list(rules), errors=list(errors)
+    )
 
 
 def test_sync_clean(ds, sections):
@@ -21,7 +27,29 @@ def test_sync_clean(ds, sections):
     r = sync(account_state(findings), policy, derived, s.expected_category, sections)
     assert [x.section_id for x in r.rules] == ["LF.v3.s2", "LF.v3.s5"] and r.dropped_section_ids == []
     assert r.issues == [] and r.lean is None and r.category_covered is True
-    assert not (r.account_missing or r.policy_missing or r.budget_hit)
+    assert not (r.account_missing or r.policy_missing or r.budget_hit or r.policy_date_mismatch)
+
+
+def test_sync_policy_date_mismatch(ds, sections):
+    """Read on the complaint date (the parallel run): no mismatch when the same policy set applies, a mismatch otherwise."""
+    s = ds.scenarios["S-02"]
+    findings, derived = facts(ds, s)
+    assert derived.policy_date.date().isoformat() == "2026-10-14"
+    same_set = policy_with(derived, s.expected_category, rule("LF.v3.s2"), policy_date=WORLD_TODAY)
+    r = sync(account_state(findings), same_set, derived, s.expected_category, sections)
+    assert r.policy_date_mismatch is False and r.issues == [] and r.lean is None
+
+    # a disputed event from before LF.v3 took effect: the read on Oct 20 saw a different policy set
+    old = derived.model_copy(update={"policy_date": datetime(2026, 4, 15)})
+    r = sync(account_state(findings), same_set, old, s.expected_category, sections)
+    # the mismatch itself has no lean (a re-retrieve fixes it); but with every rule dropped, nothing covers the category
+    assert r.policy_date_mismatch is True and r.rules == [] and r.category_covered is False
+    assert r.issues == [
+        "no kept rule covers late_fee_autopay",
+        "policy read on 2026-10-20, but a different policy set was in force on 2026-04-15",
+        "rule LF.v3.s2 dropped: not in force on 2026-04-15",
+    ]
+    assert r.lean == "manual_escalation"
 
 
 def test_sync_drops_unknown_and_stale(ds, sections):

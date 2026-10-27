@@ -6,10 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from dispute_agent.account_agent import AccountFindings
+from dispute_agent.config import WORLD_TODAY
 from dispute_agent.data import Scenario
 from dispute_agent.derive import derive_states
 from dispute_agent.policy_agent import (
-    POLICY_SYSTEM, PolicyReading, RuleReading, candidates, check_citations, run_policy_agent, search_policy,
+    NO_FACTS_YET, POLICY_SYSTEM, PolicyReading, RuleReading, candidates, check_citations, render_seed,
+    run_policy_agent, search_policy,
 )
 from test_derive import DEV_IDS
 
@@ -77,9 +79,14 @@ def test_answer_key_is_valid(ds, sections):
 
 def test_citation_check(sections):
     retrieved = search_policy(sections, "late_fee_autopay", datetime(2026, 10, 14), "late fee")
-    reading = PolicyReading(rules=[rule("LF.v3.s5"), rule("LF.v3.s5"), rule("LF.v2.s3", "procedural")], summary="x")
+    reading = PolicyReading(
+        rules=[rule("LF.v3.s5"), rule("LF.v3.s5"), rule("LF.v3.s5", "refer_to_supervisor"), rule("LF.v2.s3", "procedural")],
+        summary="x",
+    )
     rules, dropped = check_citations(reading, retrieved)
-    assert [r.section_id for r in rules] == ["LF.v3.s5"] and dropped == ["LF.v2.s3"]
+    # a section may state two rules with different outcomes (LF.v3.s6 does); an exact repeat is dropped silently
+    assert [(r.section_id, r.outcome) for r in rules] == [("LF.v3.s5", "fee_adjustment_review"), ("LF.v3.s5", "refer_to_supervisor")]
+    assert dropped == ["LF.v2.s3"]
 
 
 def test_run_and_errors(ds, sections):
@@ -87,12 +94,34 @@ def test_run_and_errors(ds, sections):
     account, derived = facts(ds, s)
 
     good = FakeModel(PolicyReading(rules=[rule("LF.v3.s2", "explains_outcome")], summary="x"))
-    result = run_policy_agent(sections, s.expected_category, s.rep_message, account, derived, good)
+    result = run_policy_agent(
+        sections, s.expected_category, s.rep_message, derived.policy_date, derived.policy_date_basis, account, derived, good
+    )
     assert good.calls == 1 and result.errors == [] and result.rules[0].section_id == "LF.v3.s2"
+    assert result.policy_date_basis == "disputed_event"
 
     bad = FakeModel(RuntimeError("boom"))
-    result = run_policy_agent(sections, s.expected_category, s.rep_message, account, derived, bad)
+    result = run_policy_agent(
+        sections, s.expected_category, s.rep_message, derived.policy_date, derived.policy_date_basis, account, derived, bad
+    )
     assert result.errors == ["interpret failed: RuntimeError: boom"]
+
+
+def test_run_without_facts(ds, sections):
+    """The parallel first run: the complaint date, no account findings, no derived facts."""
+    s = ds.scenarios["S-02"]
+    good = FakeModel(PolicyReading(rules=[rule("LF.v3.s2")], summary="x"))
+    result = run_policy_agent(sections, s.expected_category, s.rep_message, WORLD_TODAY, "complaint_date", model=good)
+    assert good.calls == 1 and result.errors == [] and result.policy_date_basis == "complaint_date"
+    assert result.policy_date == WORLD_TODAY and set(s.expected_policy_ids) <= {r.section.section_id for r in result.retrieved}
+
+    seed = render_seed(s.expected_category, s.rep_message, result.retrieved, WORLD_TODAY, "complaint_date")
+    assert f"Derived facts: {NO_FACTS_YET}" in seed and f"Evidence events: {NO_FACTS_YET}" in seed
+    assert "Account summary: none" in seed and "Policy date: 2026-10-20 (complaint_date)" in seed
+
+    account, derived = facts(ds, s)
+    with_facts = render_seed(s.expected_category, s.rep_message, result.retrieved, derived.policy_date, "disputed_event", account, derived)
+    assert NO_FACTS_YET not in with_facts and "Policy date: 2026-10-14 (disputed_event)" in with_facts
 
 
 def test_ambiguity_rule_is_narrow():

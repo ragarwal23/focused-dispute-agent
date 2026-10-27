@@ -1,7 +1,8 @@
 # Payment Dispute Review Agent — Project Brief
 
-**Version 0.7 | October 25, 2026 | Timebox: 3 days**
+**Version 0.8 | October 26, 2026 | Timebox: 3 days**
 
+*v0.8: matches [architecture.md](architecture.md) v0.6. Back to the v0.4 shape: the two agents run in parallel under the LangGraph orchestrator and meet at a sync join, which may send each agent back once (clarify when the Account Agent returned nothing, re-retrieve when a different policy set was in force on the disputed event's date). The Policy Agent's first read is on the complaint date. The gate, sync and synthesize keep their v0.7 behaviour; `create_review_case` is built.*
 *v0.7: matches [architecture.md](architecture.md) v0.5. The agents run in sequence, Account then Policy, because policy retrieval needs the disputed event's date. LangGraph code, not the LLM, owns the run, and there are no retries or re-requests. The gate enforces policy with Python checks we wrote for P1–P7; the LLM's reading of the policy is advisory. Unclear policy escalates; unclear or missing facts go to `need_more_evidence`. The route is the only action. Data sizes updated to what was built.*
 *v0.6: decisions D1–D6 closed (see [architecture.md](architecture.md)). Policy retrieval is a code filter by category and effective date, with vector search deferred; payment and refund states are derived by code; a gate rejection keeps the draft and adds `gate_rejected`.*
 *v0.5: section 4 restated as an orchestrator with two specialist agents and a deterministic gate, delegation order fixed. Same steps as v0.4, named by owner. Policy retrieval no longer specified as vector search. Full detail in [architecture.md](architecture.md).*
@@ -72,23 +73,33 @@ The route is the only thing the agent proposes. It picks which human queue gets 
 
 ## 4. How it works
 
-One LangGraph graph: an **orchestrator** that delegates to two **specialist agents** in a fixed order, then a **deterministic gate** in code. The orchestrator is code: LangGraph decides what runs next, and the LLM is called only to classify and to synthesize. Each agent runs once, Account first, then Policy, because the Policy Agent needs the disputed event's date. Nothing chooses at runtime which agents to call.
+One LangGraph graph: an **orchestrator** that fans out to two **specialist agents** in parallel, a **sync** join that cross-checks their findings, then a **deterministic gate** in code. The orchestrator is code: LangGraph decides what runs next, and the LLM is called only to classify and to synthesize. Both agents run after classify, at the same time; sync can send each one back once. Nothing chooses at runtime which agents to call.
 
 ```text
 rep message + account_id
         |
-   [Orchestrator]               LangGraph code. Owns the run: fixed order, typed state, failures.
+   [Orchestrator]               LangGraph graph. Owns the run: fan-out, typed state, failures.
      1. classify                one LLM call: pick the category
         |
-   [Account Agent]              LLM + read-only account tools, max 6 calls. Proposes the
-        |                       disputed event, or all candidates if more than one fits
-     code                       confirms the event is on this account, derives payment and
-        |                       refund state, sets policy_date, sets fact flags
-   [Policy Agent]               code filters policy sections by category and policy_date
-        |                       (no embeddings in v1), then one LLM call turns them into
-        |                       structured rules with citations. Advisory only
-     2. sync                    code: both findings present, cited dates line up; anything
-        |                       that doesn't is marked unknown
+        +---------------------------+
+        |                           |
+   [Account Agent]             [Policy Agent]
+   LLM + read-only account     code filters policy sections by category and the
+   tools, max 6 calls.         complaint date (no embeddings in v1), then one LLM
+   Proposes the disputed       call turns them into structured rules with
+   event, or all candidates    citations. Advisory only
+        |                           |
+     code: confirms the event       |
+     is on this account, derives    |
+     payment and refund state,      |
+     sets policy_date + fact flags  |
+        |                           |
+        +---------------------------+
+        |
+     2. sync                    code join: both findings present; the policy set read is the
+        |  ⟲ clarify            one in force on policy_date; cited dates line up. Two bounded
+        |  ⟲ re-retrieve        re-requests, each at most once: Account Agent again if it
+        |                       returned nothing; Policy Agent again on policy_date if the set differs
      3. synthesize              one LLM call: pick route, cite evidence, write facts + case note
         |
    [Gate]                       plain Python, no LLM. Our checks for P1–P7 run against the
@@ -98,7 +109,7 @@ rep message + account_id
    drafted case to the rep      the rep decides; only the servicing backend moves money
 ```
 
-No retries and no re-requests in v1. A runtime-choosing orchestrator, or a second look by an agent, is the v2 candidate if evals show it is needed.
+The only second runs are sync's two re-requests, each bounded to one. A runtime-choosing orchestrator, or a second look by an agent on its own judgment, is the v2 candidate if evals show it is needed.
 
 **The gate enforces our rules, not the LLM's.** Each policy assumption P1–P7 is a Python check keyed by its policy section ID. Each check reads structured event fields only and returns true, false or unknown. A true result can rule out `explain_events` or `adjustment_review`; the two cautious routes are never ruled out. The LLM's structured rules feed citations and the case note, never the gate's logic.
 
@@ -106,7 +117,7 @@ No retries and no re-requests in v1. A runtime-choosing orchestrator, or a secon
 
 If the gate rejects, the route is forced to `manual_escalation`. The output keeps the original citations and note and adds `gate_rejected` with the reasons, so evals can tell an agent that escalated correctly from one the gate rescued. The LLM does not get to argue.
 
-When the Account Agent hits its tool budget, it returns what it has with a budget-hit flag. When a tool errors or an agent finds nothing useful, the orchestrator records the exact error, marks that finding unknown, and continues. No retries.
+When the Account Agent hits its tool budget, it returns what it has with a budget-hit flag. When a tool errors or an agent finds nothing useful, the orchestrator records the exact error, marks that finding unknown, and continues. No retries beyond sync's two re-requests.
 
 ### Tools
 
@@ -164,7 +175,7 @@ Held-out cases are frozen before any prompt tuning. With four cases they are a s
 | Facts block | Exact match on typed fields |
 | Confidence consistency | `need_more_evidence` or `manual_escalation` with `high` confidence is a fail |
 | Action | `create_review_case` called exactly once, or zero when a case exists; correct arguments |
-| Trajectory | Both agents ran once, Account then Policy; tool calls within budget |
+| Trajectory | Both agents ran, each at most twice (one re-request each); tool calls within budget |
 | Case note quality | Opus judge with a rubric: grounded in cited evidence, no invented facts, clear to a rep |
 
 Judge calibration: hand-label every dev case note from v1 and v2 for groundedness, about 24 items, and report agreement with the judge.

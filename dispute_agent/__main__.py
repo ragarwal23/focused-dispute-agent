@@ -1,4 +1,4 @@
-"""Command line: look at the data, run one complaint, or run the eval.
+"""Command line: look at data, run complaints and evals, or validate their stability and traces.
 
     python -m dispute_agent show [A-1002]
     python -m dispute_agent ask A-1002 "cust got hit w a late fee ... conf # ends in 8812"
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,7 @@ from .derive import derived_json
 from .evaluate import run_eval
 from .pipeline import investigate
 from .policy_agent import load_policies
+from .validate import stability, trace_check
 
 
 def _ts(dt: datetime | None) -> str:
@@ -116,7 +118,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     )
     print("\nderived (code):")
     print(json.dumps(derived_json(inv.derived), indent=2))
-    print("\npolicy retrieved (ranked):")
+    print(f"\npolicy read on {policy.policy_date:%Y-%m-%d} ({policy.policy_date_basis}); retrieved (ranked):")
     for r in policy.retrieved:
         s, via = r.section, f" via {r.via}" if r.via else ""
         print(f"{r.rank} {s.section_id} {r.score:.3f} {s.effective_from}→{s.effective_to or '-'}{via}")
@@ -126,7 +128,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
     print(f"policy errors={policy.errors} dropped={policy.dropped_section_ids}")
 
     issues = "; ".join(inv.sync.issues) or "no issues"
-    print(f"\nsync (code): {issues}  lean={inv.sync.lean}  account attempts: {inv.account_attempts}")
+    print(f"\nsync (code): {issues}  lean={inv.sync.lean}  account attempts: {inv.account_attempts}  policy attempts: {inv.policy_attempts}")
     print("\ndraft (LLM):")
     if inv.synthesis.draft:
         print(json.dumps(inv.synthesis.draft.model_dump(), indent=2))
@@ -141,6 +143,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         line = f"{c.section_id} {c.check}" + (f"={c.result}" if c.result else "")
         cited.append(line + (f" rules out {c.rules_out}" if c.rules_out else ""))
     print("cited sections: " + (" · ".join(cited) or "none"))
+    print(f"\ncreate_review_case (code): {inv.case.case_id} created={inv.case.created} route={inv.case.route}")
     return 0
 
 
@@ -148,6 +151,22 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return run_eval(
         args.data, args.split, args.scenario, args.min_disputed_acc, args.min_policy_recall, args.min_route_acc
     )
+
+
+def cmd_stability(args: argparse.Namespace) -> int:
+    reports = [json.loads(Path(path).read_text()) for path in args.reports]
+    known = {tuple(value.split(":", 1)) for value in args.known}
+    lines, ok = stability(reports, known)
+    print("\n".join(lines))
+    return 0 if ok else 1
+
+
+def cmd_trace(args: argparse.Namespace) -> int:
+    from langsmith import Client
+
+    lines, ok = trace_check(Client(), os.getenv("LANGSMITH_PROJECT", "default"), args.last)
+    print("\n".join(lines))
+    return 0 if ok else 2 if lines[0].startswith("no qualifying run") else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -166,8 +185,13 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--min-disputed-acc", type=float, default=0.0)
     ev.add_argument("--min-policy-recall", type=float, default=0.0)
     ev.add_argument("--min-route-acc", type=float, default=0.0)
+    stable = sub.add_parser("stability", help="check repeated eval JSON reports")
+    stable.add_argument("reports", nargs="+")
+    stable.add_argument("--known", action="append", default=[], metavar="SCENARIO:CHECK")
+    trace = sub.add_parser("trace", help="verify recent LangSmith graph trace shapes")
+    trace.add_argument("--last", type=int, default=1, metavar="N")
     args = p.parse_args(argv)
-    return {"show": cmd_show, "ask": cmd_ask, "eval": cmd_eval}[args.cmd](args)
+    return {"show": cmd_show, "ask": cmd_ask, "eval": cmd_eval, "stability": cmd_stability, "trace": cmd_trace}[args.cmd](args)
 
 
 if __name__ == "__main__":

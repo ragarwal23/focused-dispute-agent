@@ -6,9 +6,11 @@ covers the dispute category. Anything that does not line up becomes an issue in 
 the cautious route the draft should lean to. The lean is a sentence shown to the LLM, never a route set by
 code: the LLM still chooses, and the gate and the evals catch it when it chooses wrong.
 
-Sync decides one thing for the pipeline: when the Account Agent's finalize failed (`account_missing`), the
-pipeline runs the Account Agent chain once more, then continues regardless (S14 in docs/plans/sync-synthesize.md).
-Nothing else is retried: a budget hit, missing policy or a dropped rule would come back the same.
+Sync raises two flags the graph may act on, each at most once (docs/plans/orchestrator.md, O2): `account_missing`
+(the Account Agent's finalize failed) sends the Account Agent back for one more run; `policy_date_mismatch` (the
+Policy Agent read on the complaint date, but a different policy set was in force on the disputed event's date)
+re-runs the Policy Agent on that date. Nothing else is retried: a budget hit, missing policy or a dropped rule
+would come back the same.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ from pydantic import BaseModel
 
 from .data import Category, Route
 from .derive import DerivedFacts
-from .policy_agent import PolicyFindings, PolicySection, RuleReading, in_force
+from .policy_agent import PolicyFindings, PolicySection, RuleReading, candidates, in_force
 
 
 class SyncResult(BaseModel):
@@ -27,6 +29,7 @@ class SyncResult(BaseModel):
     dropped_section_ids: list[str]
     account_missing: bool  # the Account Agent returned no findings (finalize failed)
     policy_missing: bool  # the Policy Agent returned None, errors, or no rules at all
+    policy_date_mismatch: bool  # the policy was read on a date with a different in-force set than policy_date
     budget_hit: bool
     category_covered: bool  # some kept rule's section lists the dispute category
     issues: list[str]
@@ -45,7 +48,15 @@ def sync(
     budget_hit = bool(account and account["budget_hit"])
     policy_missing = policy is None or not policy.rules
 
-    # keep only rules whose section exists and was in force; retrieval filtered on the same date, so a drop here is a bug
+    # the Policy Agent ran in parallel, on the complaint date; a mismatch means a different policy set applied
+    on_policy = derived.policy_date.date()
+    read_on = policy.policy_date.date() if policy else on_policy
+    policy_date_mismatch = read_on != on_policy and (
+        {s.section_id for s in candidates(sections, category, read_on)}
+        != {s.section_id for s in candidates(sections, category, on_policy)}
+    )
+
+    # keep only rules whose section exists and was in force on policy_date; after a re-retrieve, a drop here is a bug
     kept: list[RuleReading] = []
     dropped: list[str] = []
     drop_issues: list[str] = []
@@ -69,13 +80,17 @@ def sync(
         (account_missing, "account findings missing", "need_more_evidence"),
         (budget_hit, "account agent hit its tool budget", "need_more_evidence"),
     ]
+    mismatch_issues = (
+        [f"policy read on {read_on}, but a different policy set was in force on {on_policy}"] if policy_date_mismatch else []
+    )
     return SyncResult(
         rules=kept,
         dropped_section_ids=dropped,
         account_missing=account_missing,
         policy_missing=policy_missing,
+        policy_date_mismatch=policy_date_mismatch,
         budget_hit=budget_hit,
         category_covered=category_covered,
-        issues=[issue for hit, issue, _ in flags if hit] + drop_issues,
+        issues=[issue for hit, issue, _ in flags if hit] + mismatch_issues + drop_issues,
         lean=next((route for hit, _, route in flags if hit), None),
     )
