@@ -3,7 +3,11 @@
 import openpyxl
 
 from dispute_agent.evaluation.evaluate import select_scenarios
-from dispute_agent.evaluation.golden import GOLDEN_XLSX, Case, build_cases, check, read_golden, write_golden
+from dispute_agent.evaluation.evaluate import score
+from dispute_agent.evaluation.golden import (
+    GOLDEN_XLSX, PRODUCERS, Case, build_cases, check, empty_stub, golden_echo, read_golden, write_golden,
+)
+from dispute_agent.evaluation.metrics import AXES, axis_verdicts, grade
 
 SHEETS = ["Cases"] + [f"S-{i:02d}" for i in range(1, 17)]
 
@@ -74,3 +78,21 @@ def test_split_all_selects_sixteen(ds):
     ]
     assert [s.scenario_id for s in select_scenarios(ds, "heldout", None)] == ["S-04", "S-08", "S-12", "S-16"]
     assert [s.scenario_id for s in select_scenarios(ds, "all", "S-04")] == ["S-04"]
+
+
+def test_golden_echo_all_pass_16(ds, sections):
+    """The scorer's calibration: the key itself passes every axis on every scenario, S-11 and S-15 included."""
+    for case in read_golden():
+        inv = golden_echo(ds, sections, case)
+        verdicts = axis_verdicts(score(case, inv, ds))
+        assert verdicts == {a: "PASS" for a in AXES}, (case.scenario_id, verdicts)
+        assert inv.case.created is (case.expected_existing_case_id is None)
+
+
+def test_empty_stub_fails(ds, sections):
+    """An empty answer never grades PASS; its route is right only where the key wants manual_escalation, via the gate."""
+    for case in read_golden():
+        verdicts = axis_verdicts(score(case, empty_stub(ds, sections, case), ds))
+        assert grade(verdicts) == "FAIL" and verdicts["evidence"] == "FAIL" and verdicts["confidence"] == "FAIL"
+        assert verdicts["route"] == ("PARTIAL" if case.expected_route == "manual_escalation" else "FAIL")
+    assert set(PRODUCERS) == {"golden_echo", "empty_stub"}

@@ -29,7 +29,8 @@ from dispute_agent.account_agent.agent import build_account_agent
 from dispute_agent.account_agent.derive import derive_states, derived_json
 from dispute_agent.config import MODEL_ID, TOOL_BUDGET
 from dispute_agent.data import Dataset, Route, Scenario, load_dataset
-from dispute_agent.evaluation.golden import GOLDEN_PATH
+from dispute_agent.evaluation.golden import GOLDEN_PATH, PRODUCERS
+from dispute_agent.evaluation.metrics import grade, row_verdicts
 from dispute_agent.orchestrator.graph import MAX_ATTEMPTS, build_graph
 from dispute_agent.orchestrator.run import Investigation, investigate
 from dispute_agent.policy_agent.retrieve import load_policies
@@ -148,14 +149,19 @@ def run_eval(
     min_disputed_acc: float,
     min_policy_recall: float,
     min_route_acc: float = 0.0,
+    producer: str = "agent",
 ) -> int:
-    """Score the split (or one scenario), write runs/eval_<timestamp>.json, return the exit code."""
+    """Score the split (or one scenario), write runs/eval_<timestamp>.json, return the exit code.
+
+    `producer` is the live agent by default; `golden_echo` and `empty_stub` (golden.py) score the key and an empty
+    answer through the same path with no LLM, to prove the scorer itself before a model is graded.
+    """
     if os.environ.get("DISPUTE_FAULT"):
         print("unset DISPUTE_FAULT before eval")
         return 2
     ds = load_dataset(data_dir)
     sections = load_policies(Path(data_dir) / "policies")
-    graph = build_graph(ds, sections, build_account_agent(ds))
+    graph = build_graph(ds, sections, build_account_agent(ds)) if producer == "agent" else None
     scenarios = select_scenarios(ds, split, scenario_id)
     if os.getenv("LANGSMITH_TRACING", "").lower() == "true":
         print(f"tracing to LangSmith project: {os.getenv('LANGSMITH_PROJECT', 'default')}")
@@ -168,7 +174,10 @@ def run_eval(
             f"note_driven={str(s.note_driven).lower()}", "slice=investigate",
         ]
         try:
-            inv = investigate(ds, sections, None, s.account_id, s.rep_message, tags, s.scenario_id, graph=graph)
+            if producer == "agent":
+                inv = investigate(ds, sections, None, s.account_id, s.rep_message, tags, s.scenario_id, graph=graph)
+            else:
+                inv = PRODUCERS[producer](ds, sections, s)
         except Exception as exc:
             print(f"{s.scenario_id:<9}EXCEPTION {type(exc).__name__}: {exc}")
             rows.append({"scenario_id": s.scenario_id, "exception": f"{type(exc).__name__}: {exc}"})
@@ -208,7 +217,7 @@ def run_eval(
     out_path.parent.mkdir(exist_ok=True)
     report = {
         "category_source": "classify", "split": split, "model_id": MODEL_ID, "golden_path": GOLDEN_PATH,
-        "rows": rows, "totals": totals,
+        "producer": producer, "rows": rows, "totals": totals,
     }
     out_path.write_text(json.dumps(report, indent=2, default=str))
     print(
@@ -217,5 +226,7 @@ def run_eval(
         f"route accuracy {route_acc:.2f} (min {min_route_acc}); wrote {out_path}"
     )
     print("\n".join(confusion_lines(scored)))
+    grades = [grade(row_verdicts(r)) for r in rows]
+    print(f"grade PASS {grades.count('PASS')}/{len(rows)}")
     below = disputed_acc < min_disputed_acc or policy_recall < min_policy_recall or route_acc < min_route_acc
     return 1 if failures or below else 0

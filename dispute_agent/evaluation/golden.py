@@ -5,6 +5,10 @@ A `Case` has exactly the fields of a `Scenario`, so `score()` and the report acc
 
     python -m dispute_agent.evaluation.golden --build    rewrite golden.xlsx from data/scenarios.xlsx
     python -m dispute_agent.evaluation.golden --check    exit 1 if golden.xlsx differs from a rebuild
+
+The producers at the bottom turn a golden case into an `Investigation` with no LLM: `golden_echo` is the key itself
+(the scorer must pass it on every scenario), `empty_stub` is an agent that found nothing (the scorer must fail it).
+`eval --producer` runs them through the same scoring and JSON as a live run.
 """
 
 from __future__ import annotations
@@ -17,7 +21,16 @@ from typing import Any
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 
+from dispute_agent.account_agent.agent import AccountFindings, OtherAccountMatch
+from dispute_agent.account_agent.derive import derive_states
 from dispute_agent.data import Dataset, Scenario, load_dataset
+from dispute_agent.gate.gate import gate
+from dispute_agent.orchestrator.run import Investigation
+from dispute_agent.policy_agent.agent import PolicyFindings, RuleReading
+from dispute_agent.policy_agent.retrieve import PolicySection, RetrievedSection
+from dispute_agent.review.create_review_case import create_review_case
+from dispute_agent.sync.sync import sync
+from dispute_agent.sync.synthesize import Draft, SynthesisResult
 
 GOLDEN_XLSX = Path(__file__).resolve().parent / "golden.xlsx"
 GOLDEN_PATH = "dispute_agent/evaluation/golden.xlsx"  # as written into every eval JSON
@@ -148,6 +161,58 @@ def _index_diffs(ds: Dataset, path: Path) -> list[str]:
         return diffs
     finally:
         wb.close()
+
+
+def key_findings(case: Scenario) -> AccountFindings:
+    """What a perfect Account Agent would return for this scenario, built from the answer key."""
+    other = OtherAccountMatch(event_id="E-0135", account_id="A-1008", reference="PHN-0048213", why="keyed to another customer")
+    return AccountFindings(
+        relevant_event_ids=case.expected_required_event_ids,
+        disputed_event_id=case.expected_disputed_event_id,
+        candidate_event_ids=case.expected_required_event_ids if case.trap == "ambiguous" else [],
+        other_account_matches=[other] if case.scenario_id == "S-07" else [],
+        claimed_but_not_found=["per key"] if case.trap in ("missing_record", "wrong_account") else [],
+        notes_summary="", summary="",
+    )
+
+
+def investigation(
+    ds: Dataset, sections: dict[str, PolicySection], case: Scenario, findings: AccountFindings | None,
+    draft: Draft | None, attempts: int = 1,
+) -> Investigation:
+    """An Investigation built from the answer key around the given findings and draft; code steps run for real."""
+    account = {"findings": findings, "budget_hit": False, "tool_errors": [], "tool_calls_made": 2, "messages": []}
+    derived = derive_states(findings, case.expected_category, case.account_id, ds)
+    policy = PolicyFindings(
+        policy_date=derived.policy_date, category=case.expected_category,
+        retrieved=[RetrievedSection(section=sections[i], rank=n, score=1.0) for n, i in enumerate(case.expected_policy_ids, 1) if i in sections],
+        rules=[RuleReading(section_id=i, condition="per key", outcome="fee_adjustment_review", why="per key", policy_ambiguous=False) for i in case.expected_policy_ids],
+    )
+    synced = sync(account, policy, derived, case.expected_category, sections)
+    synthesis = SynthesisResult(draft=draft) if draft else SynthesisResult(errors=["no draft"])
+    g = gate(draft, case.account_id, case.expected_category, derived, policy, sections, ds)
+    filed = create_review_case(ds, case.account_id, case.expected_category, derived, g)
+    return Investigation(case.expected_category, account, derived, policy, synced, synthesis, g, filed, attempts)
+
+
+def golden_echo(ds: Dataset, sections: dict[str, PolicySection], case: Scenario) -> Investigation:
+    """The golden answer as an Investigation: the scorer's calibration, every axis must PASS."""
+    cautious = case.expected_route in ("need_more_evidence", "manual_escalation")
+    draft = Draft(
+        review_route=case.expected_route, event_ids=case.expected_required_event_ids,
+        policy_source_ids=case.expected_policy_ids, confidence="medium" if cautious else "high",
+        open_questions=["Which event does the customer mean?"] if case.expected_route == "need_more_evidence" else [],
+        case_note=case.rationale,
+    )
+    return investigation(ds, sections, case, key_findings(case), draft)
+
+
+def empty_stub(ds: Dataset, sections: dict[str, PolicySection], case: Scenario) -> Investigation:
+    """An agent that found nothing and drafted nothing: the scorer must fail it."""
+    return investigation(ds, sections, case, None, None)
+
+
+PRODUCERS = {"golden_echo": golden_echo, "empty_stub": empty_stub}
 
 
 def main(argv: list[str] | None = None) -> int:

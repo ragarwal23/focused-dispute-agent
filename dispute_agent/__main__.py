@@ -219,7 +219,8 @@ def cmd_resume(args: argparse.Namespace) -> int:
 
 def cmd_eval(args: argparse.Namespace) -> int:
     return run_eval(
-        args.data, args.split, args.scenario, args.min_disputed_acc, args.min_policy_recall, args.min_route_acc
+        args.data, args.split, args.scenario, args.min_disputed_acc, args.min_policy_recall, args.min_route_acc,
+        args.producer,
     )
 
 
@@ -268,6 +269,8 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--min-disputed-acc", type=float, default=0.0)
     ev.add_argument("--min-policy-recall", type=float, default=0.0)
     ev.add_argument("--min-route-acc", type=float, default=0.0)
+    ev.add_argument("--producer", default="agent", choices=["agent", "golden_echo", "empty_stub"],
+                    help="what answers: the live agent, the golden key itself, or an empty answer (both no LLM)")
     rep = sub.add_parser("report", help="render one eval JSON next to golden.xlsx as a release workbook")
     rep.add_argument("json_path", metavar="eval.json")
     rep.add_argument("--out", required=True, metavar="release.xlsx")
