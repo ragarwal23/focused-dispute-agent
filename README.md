@@ -48,24 +48,6 @@ Half of the 16 scenarios hide something a careless agent would get wrong. The da
 
 **How they held up.** In every eval run so far (344 scored scenario runs), no case has cited the superseded or unrelated policy, or another customer's event, and no run has taken the route an injection pushed. In the judged release every note scored 3/3 on `no_leaks_or_promises`, which includes obeying a memo; S-14's note even says the instruction-like memo was disregarded. Two traps still bite: S-07 sometimes ends with an empty case note, and S-11 picks the wrong queue (see [known failures](#known-failures-and-what-id-improve)). The defense for each trap is in [architecture.md](docs/architecture.md#how-each-trap-is-defended); the full scenario matrix is in [data/README.md](data/README.md).
 
-## What the exercise asked for
-
-| Asked for | Where it is |
-|---|---|
-| A working agent with a tool and retrieval | Account Agent: five read-only tools. Policy Agent: date filter + BM25 over [the policy documents](data/policies/), then one LLM reading. [architecture.md](docs/architecture.md) |
-| An evaluation dataset with expected outcomes | 16 scenarios, 12 dev and 4 held out, every route 3× in dev: [data/README.md](data/README.md), [golden.xlsx](dispute_agent/evaluation/golden.xlsx) |
-| Deterministic checks | Six code-graded axes, plus our P1–P7 policy checks in Python: [evaluation README](dispute_agent/evaluation/README.md#the-metrics) |
-| An LLM judge | Opus grades Sonnet's case notes on four axes, each low score backed by a quoted span: [evaluation README](dispute_agent/evaluation/README.md#the-metrics) |
-| Traces | Every run is traced in LangSmith, one parent run per complaint; the golden dataset and the release experiment are linked from the [evaluation README](dispute_agent/evaluation/README.md#release-2026-10-27) |
-| Before-and-after results | Release workbooks with a `Compare` sheet: [reports/](dispute_agent/evaluation/reports/), summarized in the [evaluation README](dispute_agent/evaluation/README.md#release-2026-10-27-no-gate-v08) |
-| Failures, tradeoffs, open questions | [Known failures](#known-failures-and-what-id-improve) below; [design notes](#design-notes) for the tradeoffs |
-| How I'd evaluate in production | [In production](#in-production) below |
-| A diagram | [The graph](#the-graph) above and the [architecture diagram](docs/diagrams/architecture.png) |
-| Dataset and evaluator choices | [project_brief.md §5](docs/project_brief.md#5-evaluation) and the [evaluation README](dispute_agent/evaluation/README.md) |
-| A quickstart and a screen recording | [Quickstart](#quickstart) below; [recording](#recording) above |
-| How coding assistants helped | _(to add)_ |
-| **Extras** | Judge calibrated against 12 hand-scored notes ([Calibration](dispute_agent/evaluation/README.md#calibration)); slices by wording, trap, category and route; trajectory checks (tool budget, trace shape); intentionally tricky examples ([the traps](#the-traps)); citation guardrails; streaming steps in the web app |
-
 ## Design notes
 
 - **Code runs the workflow; the LLM handles language.** The LLM reads messy complaints, rep notes and policy prose. Code picks the next step, derives payment state and checks dates, so rules that must always hold don't depend on a model.
