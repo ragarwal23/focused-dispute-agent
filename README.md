@@ -8,6 +8,39 @@ A LangGraph agent that investigates a customer's payment dispute and drafts a re
 2. **[Architecture diagram](docs/diagrams/architecture.png)**: the whole system on one page.
 3. **[Architecture walkthrough](docs/architecture.md)**: each box of the diagram in detail.
 
+## The graph
+
+Code decides what runs next; the LLM classifies, runs the two agents and drafts. Dashed edges run at most once. Built in [graph.py](dispute_agent/orchestrator/graph.py).
+
+```mermaid
+flowchart TD
+    START([rep message + account_id]) --> classify["classify<br/><i>LLM</i>"]
+    classify --> account_agent["account_agent<br/><i>LLM + 5 read-only tools, ≤6 calls</i>"]
+    classify --> policy_agent["policy_agent<br/><i>code retrieval + LLM interpretation, on the complaint date</i>"]
+    account_agent --> derive_states["derive_states<br/><i>code: payment/refund state, policy_date, fact flags</i>"]
+    derive_states --> sync["sync<br/><i>code join + cross-check</i>"]
+    policy_agent --> sync
+    sync -.->|no account findings, once| account_agent_retry["account_agent_retry → derive_states_retry"]
+    account_agent_retry -.-> sync
+    sync -.->|policy set differs on policy_date, once| policy_agent_retry["policy_agent_retry<br/><i>on policy_date, with the facts</i>"]
+    policy_agent_retry -.-> sync
+    sync --> synthesize["synthesize<br/><i>LLM; only the IDs shown; no draft → manual_escalation</i>"]
+    synthesize --> review{{"review<br/><i>pause: the rep approves, overrides or answers</i>"}}
+    review -->|approve or override| create_review_case["create_review_case<br/><i>code, simulated write</i>"]
+    review -.->|rep answered, once| account_agent_followup["account_agent_followup → derive_states_followup"]
+    account_agent_followup -.-> sync
+    create_review_case --> END([case filed under the recommended or the rep's route])
+```
+
+## Design notes
+
+- **Code runs the workflow; the LLM handles language.** The LLM reads messy complaints, rep notes and policy prose. Code picks the next step, derives payment state and checks dates, so rules that must always hold don't depend on a model.
+- **A fixed graph, not an LLM supervisor.** Every first run takes one of four shapes, and the attempt counts in state say which, so traces compare cleanly. A supervisor is worth adding only if evals show the fixed graph is what fails.
+- **Two agents in parallel, re-requests capped at one.** The Account and Policy Agents don't need each other to start. Sync can send each back once, then the run continues and records what's missing, so it can't loop.
+- **Citations limited by the schema.** Synthesize's output schema accepts only the event and section IDs it was shown, so the wrong-account trap holds by construction, not by prompt. No valid draft means `manual_escalation`.
+- **Human review inside the graph.** The graph pauses before its one write, and a checkpointer saves state, so the rep can approve, override or answer later, even from a new process.
+- **Checks in the eval, not at runtime.** The P1–P7 policy checks are plain Python over event fields: they score every route without an answer key and audited the labels. Opus judges the case notes, so Sonnet isn't grading its own work.
+
 ## Repo layout
 
 ```
@@ -23,7 +56,7 @@ docs/plans/             the build plan for each slice, as written at the time (h
 runs/                   git-ignored output: eval reports and checkpoints.sqlite (paused runs). Safe to delete
 ```
 
-## Setup
+## Quickstart
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
