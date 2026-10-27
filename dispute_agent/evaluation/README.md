@@ -58,7 +58,7 @@ The 2026-10-27 capture is the brief's one held-out run. Phase 2 must not tune on
   `forbidden_event_ids / cited anywhere by the Account Agent` (the forbidden IDs next to the ones the Account Agent's
   findings mention, blank when none). `rationale / case_note` puts the labeler's reasoning beside the agent's note.
   A `Run detail` block closes the sheet: gate reasons, sync issues, the Account Agent's summary, tool calls and errors,
-  attempts, thread ID.
+  attempts.
 - A run that raised shows `EXCEPTION: <text>` in every actual cell. A run whose synthesize step produced no draft shows
   `(no draft)` for the draft fields and the gate's route (always `manual_escalation`) as the actual route.
 

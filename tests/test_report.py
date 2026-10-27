@@ -69,6 +69,7 @@ def test_sheets_and_titles(workbook, ds):
     assert t["existing_case_id / case_id"] == (None, "C-004 (created)") and t["confidence"] == (None, "high")
     assert t["rationale / case_note"] == (ds.scenarios["S-01"].rationale, "The fee stands.")
     assert t["tool_calls_made"] == (None, 3) and t["account_summary"] == (None, "cancelled autopay, fee stands")
+    assert "thread_id" not in t
     cases = {r[1]: r for r in workbook["Cases"].iter_rows(min_row=2, values_only=True)}
     assert cases["S-01"][7:] == ("explain_events", "explain_events", "E-0117", "E-0117", "no", "yes", "a1/p1", "OK")
     assert cases["S-04"][2] == "heldout" and len(cases) == 16
