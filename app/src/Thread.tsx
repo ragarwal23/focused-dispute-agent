@@ -1,5 +1,5 @@
 // The conversation: the rep's messages on the right, the assistant's replies on the left, the composer at the bottom.
-// An assistant reply shows a phase bar while it works, then its recommendation and the rep's choices.
+// An assistant reply shows a phase bar and its steps inline as it works, then its recommendation and the rep's choices.
 import { useEffect, useRef, useState } from "react";
 import { api, ROUTES, ROUTE_LABEL, type Decision, type ReviewRequest, type ResultEvent, type Route } from "./api";
 import { activePause, type AssistantTurn, type Step, type ThreadState, type Turn } from "./App";
@@ -8,12 +8,11 @@ const PHASES = ["Reading", "Investigating", "Drafting", "Checking"];
 const PHASE_OF: Record<string, number> = { classify: 0, synthesize: 2, gate: 3, review: 4, create_review_case: 4 };
 
 /** Where the assistant is: the phase of its latest step, or 4 once it has answered. */
-export function phaseOf(t: AssistantTurn): number {
+function phaseOf(t: AssistantTurn): number {
   if (t.pause || t.result) return 4;
   const last = t.steps.filter((s) => !s.parent).at(-1);
   return last ? PHASE_OF[last.key] ?? 1 : 0;
 }
-const activity = (steps: Step[]) => steps.filter((s) => s.status === "running").at(-1)?.label;
 const category = (steps: Step[]) => steps.find((s) => s.key === "classify" && s.status === "done")?.label.replace("Dispute type: ", "");
 
 function Ids({ ids }: { ids: string[] }) {
@@ -28,6 +27,32 @@ function PhaseBar({ phase }: { phase: number }) {
           <i />{p}{i < PHASES.length - 1 && <b />}
         </span>
       ))}
+    </div>
+  );
+}
+
+function Steps({ steps, streaming }: { steps: Step[]; streaming: boolean }) {
+  const [open, setOpen] = useState(false);
+  const shown = steps.filter((s) => s.status !== "done" || s.label);
+  if (!shown.length) return streaming ? <p className="doing">Starting<span className="dots" /></p> : null;
+  const expanded = streaming || open;
+  // The two agents run in parallel, so their sub-steps arrive interleaved: list each one under its own parent.
+  const ordered: Step[] = [];
+  for (const s of shown.filter((x) => !x.parent)) ordered.push(s, ...shown.filter((x) => x.parent === s.key && !ordered.includes(x)));
+  return (
+    <div className="steps">
+      {!streaming && <button className="steps-toggle" onClick={() => setOpen(!open)}>{open ? "▾" : "▸"} {shown.length} steps</button>}
+      {expanded && (
+        <ol>
+          {ordered.map((s) => (
+            <li key={s.id} className={`step ${s.status} ${s.parent ? "sub" : ""}`}>
+              <i />
+              <span className="step-text">{s.label}{s.status === "running" && <span className="dots" />}{s.status === "stopped" && <em className="muted"> (stopped)</em>}
+                {s.detail && <span className="step-detail">{s.detail}</span>}</span>
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }
@@ -110,16 +135,15 @@ function Filed({ result, threadId }: { result: ResultEvent; threadId: string | n
   );
 }
 
-function Reply({ turn, index, live, threadId, onDecide, onOpenProcess }: {
-  turn: AssistantTurn; index: number; live: boolean; threadId: string | null; onDecide: (d: Decision) => void; onOpenProcess: (i: number) => void;
+function Reply({ turn, index, live, threadId, onDecide }: {
+  turn: AssistantTurn; index: number; live: boolean; threadId: string | null; onDecide: (d: Decision) => void;
 }) {
-  const phase = phaseOf(turn), doing = activity(turn.steps), kind = category(turn.steps);
-  const shown = turn.steps.filter((s) => s.status !== "done" || s.label).length;
+  const phase = phaseOf(turn), kind = category(turn.steps);
   return (
     <div className="reply">
       <div className="reply-head"><span className="brand-line">Dispute assistant</span>{kind && <><span className="sep">·</span>{kind}</>}{turn.at && <><span className="sep">·</span>{turn.at}</>}</div>
-      {turn.streaming && <PhaseBar phase={phase} />}
-      {turn.streaming && <p className="doing">{doing ?? "Starting"}<span className="dots" /></p>}
+      {turn.steps.length > 0 && <PhaseBar phase={phase} />}
+      <Steps steps={turn.steps} streaming={turn.streaming} />
       {turn.error && (
         <div className="alert error"><p><strong>The run stopped.</strong> {turn.error}</p>
           {live && !turn.pause && !turn.result && <button className="primary" onClick={() => onDecide({ action: "approve" })}>Continue from checkpoint</button>}
@@ -127,13 +151,12 @@ function Reply({ turn, index, live, threadId, onDecide, onOpenProcess }: {
       )}
       {turn.pause && !turn.result && <Recommendation key={`${index}-${turn.pause.followups}`} req={turn.pause} live={live && !turn.error} onDecide={onDecide} />}
       {turn.result && <Filed result={turn.result} threadId={threadId} />}
-      {!turn.streaming && shown > 0 && <button className="process-pill" onClick={() => onOpenProcess(index)}>{shown} steps <span>→ View process</span></button>}
     </div>
   );
 }
 
-export default function Thread({ thread: t, onSend, onDecide, onOpenProcess, onDismiss }: {
-  thread: ThreadState; onSend: (text: string) => void; onDecide: (d: Decision) => void; onOpenProcess: (i: number) => void; onDismiss: () => void;
+export default function Thread({ thread: t, onSend, onDecide, onDismiss }: {
+  thread: ThreadState; onSend: (text: string) => void; onDecide: (d: Decision) => void; onDismiss: () => void;
 }) {
   const [text, setText] = useState(t.prefill);
   const endRef = useRef<HTMLDivElement>(null);
@@ -157,7 +180,7 @@ export default function Thread({ thread: t, onSend, onDecide, onOpenProcess, onD
         {t.turns.length === 0 && <p className="hint">Review the complaint in the box below, add anything the customer told you, and send it.</p>}
         {t.turns.map((turn: Turn, i) => turn.role === "rep"
           ? <div key={i} className={`rep ${turn.kind}`}><span className="bubble">{turn.text}</span></div>
-          : <Reply key={i} turn={turn} index={i} live={i === t.turns.length - 1} threadId={t.threadId} onDecide={onDecide} onOpenProcess={onOpenProcess} />)}
+          : <Reply key={i} turn={turn} index={i} live={i === t.turns.length - 1} threadId={t.threadId} onDecide={onDecide} />)}
         {t.notice && <p className="notice" onClick={onDismiss}>Not sent: {t.notice}</p>}
         <div ref={endRef} />
       </div>

@@ -1,11 +1,10 @@
-// The page: the inbox on the left, the conversation in the middle, the process panel on the right.
+// The page: the inbox on the left, the conversation on the right.
 // One reducer holds it all. A conversation is a list of turns: the rep's messages and the assistant's replies.
 import { useCallback, useEffect, useReducer, useState } from "react";
 import {
   api, resumeThread, startThread, ROUTE_LABEL,
   type Account, type Decision, type InboxItem, type Owner, type ReviewRequest, type ResultEvent, type StreamEvent, type ThreadSummary,
 } from "./api";
-import Process from "./Process";
 import Thread from "./Thread";
 
 export interface Step {
@@ -22,7 +21,7 @@ export interface ThreadState {
   threadId: string | null; accountId: string; channel: string; label: string | undefined; prefill: string;
   turns: Turn[]; notice: string | null;
 }
-interface State { inbox: InboxItem[]; accounts: Account[]; runs: ThreadSummary[]; thread: ThreadState | null; process: number | null }
+interface State { inbox: InboxItem[]; accounts: Account[]; runs: ThreadSummary[]; thread: ThreadState | null }
 type Action =
   | { type: "loaded"; inbox?: InboxItem[]; accounts?: Account[]; runs?: ThreadSummary[] }
   | { type: "open"; thread: ThreadState }
@@ -30,7 +29,6 @@ type Action =
   | { type: "send"; text: string; kind: RepTurn["kind"] }
   | { type: "event"; event: StreamEvent }
   | { type: "failed"; message: string }
-  | { type: "process"; turn: number | null }
   | { type: "dismiss" };
 
 const now = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -64,14 +62,14 @@ function reducer(state: State, a: Action): State {
     case "loaded":
       return { ...state, ...(a.inbox && { inbox: a.inbox }), ...(a.accounts && { accounts: a.accounts }), ...(a.runs && { runs: a.runs }) };
     case "open":
-      return { ...state, thread: a.thread, process: null };
+      return { ...state, thread: a.thread };
     case "threadId":
       return t ? { ...state, thread: { ...t, threadId: a.id } } : state;
     case "send": {
       if (!t) return state;
       const reply: AssistantTurn = { role: "assistant", steps: [], pause: null, result: null, error: null, streaming: true, at: now() };
       const turns = [...t.turns, { role: "rep", text: a.text, kind: a.kind } as RepTurn, reply];
-      return { ...state, thread: { ...t, turns, notice: null, prefill: "" }, process: turns.length - 1 };  // prefill is spent once sent
+      return { ...state, thread: { ...t, turns, notice: null, prefill: "" } };  // prefill is spent once sent
     }
     case "event":
       return t ? { ...state, thread: withLast(t, (last) => onEvent(last, a.event)) } : state;
@@ -79,11 +77,9 @@ function reducer(state: State, a: Action): State {
       if (!t) return state;
       const last = t.turns[t.turns.length - 1];
       if (last?.role === "assistant" && last.steps.length === 0)
-        return { ...state, thread: { ...t, turns: t.turns.slice(0, -2), notice: a.message }, process: null };
+        return { ...state, thread: { ...t, turns: t.turns.slice(0, -2), notice: a.message } };
       return { ...state, thread: withLast(t, (l) => ({ ...l, error: a.message, streaming: false, steps: stop(l.steps) })) };
     }
-    case "process":
-      return { ...state, process: a.turn };
     case "dismiss":
       return t ? { ...state, thread: { ...t, notice: null } } : state;
   }
@@ -102,7 +98,7 @@ function age(iso: string | null): string {
 }
 
 export default function App() {
-  const [state, dispatch] = useReducer(reducer, { inbox: [], accounts: [], runs: [], thread: null, process: null });
+  const [state, dispatch] = useReducer(reducer, { inbox: [], accounts: [], runs: [], thread: null });
   const [picking, setPicking] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const t = state.thread;
@@ -153,9 +149,8 @@ export default function App() {
     }
   }
 
-  const processTurn = t && state.process !== null ? t.turns[state.process] : null;
   return (
-    <div className={`desk ${processTurn?.role === "assistant" ? "with-process" : ""}`}>
+    <div className="desk">
       <aside className="inbox">
         <header className="brand">
           <span className="brand-mark">AMF</span>
@@ -210,7 +205,7 @@ export default function App() {
       <main className="pane">
         {t ? (
           <Thread key={`${t.accountId}-${t.label ?? ""}-${t.threadId ?? "new"}`} thread={t} onSend={send} onDecide={decide}
-            onOpenProcess={(i) => dispatch({ type: "process", turn: i })} onDismiss={() => dispatch({ type: "dismiss" })} />
+            onDismiss={() => dispatch({ type: "dismiss" })} />
         ) : (
           <div className="blank">
             <h2>Pick a complaint from the inbox</h2>
@@ -220,7 +215,6 @@ export default function App() {
         )}
       </main>
 
-      {processTurn?.role === "assistant" && <Process turn={processTurn} onClose={() => dispatch({ type: "process", turn: null })} />}
     </div>
   );
 }

@@ -19,8 +19,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .acct { font-weight: 500; color: var(--ink); }
 .acct.big { font-size: 20px; }
 
-.desk { display: grid; grid-template-columns: 300px 1fr 0; height: 100%; transition: grid-template-columns 0.25s ease; }
-.desk.with-process { grid-template-columns: 300px 1fr 320px; }
+.desk { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
 
 /* --- inbox --- */
 .inbox { border-right: 1px solid var(--rule); background: var(--paper-2); overflow-y: auto; padding: 20px 16px 40px; }
@@ -110,34 +109,25 @@ button.ghost:hover:not(:disabled), button.ghost.on { border-color: var(--ink); b
 .actions a { color: var(--accent); font-weight: 600; }
 .subform { display: flex; flex-direction: column; gap: 10px; background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius); padding: 12px; }
 .subform button { align-self: flex-start; }
-.process-pill { align-self: flex-start; background: none; border: 1px solid var(--rule); border-radius: 14px; padding: 4px 11px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
-.process-pill span { color: var(--accent); font-weight: 600; }
-.process-pill:hover { border-color: var(--accent); }
 .composer { display: flex; gap: 10px; align-items: flex-end; padding: 12px 0 20px; border-top: 1px solid var(--rule); }
 .composer textarea { flex: 1; min-height: 42px; max-height: 180px; font-size: 14.5px; padding: 10px 12px; background: var(--card); }
 .composer button { height: 42px; }
 
-/* --- process panel --- */
-.process { border-left: 1px solid var(--rule); background: var(--paper-2); overflow-y: auto; display: flex; flex-direction: column; animation: slide 0.25s ease both; }
-.process-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 16px; font: 600 11px/1 var(--sans); text-transform: uppercase; letter-spacing: 0.12em; color: var(--ink-2); border-bottom: 1px solid var(--rule); }
-.close { background: none; border: none; font-size: 18px; cursor: pointer; color: var(--muted); padding: 0 4px; }
-.phase-list { list-style: none; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--rule); font-size: 13px; color: var(--muted); display: flex; flex-direction: column; gap: 5px; }
-.phase-list .done { color: var(--accent); }
-.phase-list .active { color: var(--ink); font-weight: 600; }
-.process-body { padding: 14px 16px; flex: 1; }
-.process-body .eyebrow { margin-bottom: 10px; }
-.trail { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
-.step { display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; animation: rise 0.25s ease both; }
-.step.sub { margin-left: 18px; font-size: 12px; }
+/* --- the steps, inline in the reply --- */
+.steps { border-left: 2px solid var(--rule); margin-left: 4px; padding-left: 14px; }
+.steps-toggle { background: none; border: none; padding: 0; color: var(--ink-2); cursor: pointer; font-size: 12.5px; font-weight: 600; }
+.steps-toggle + ol { margin-top: 8px; }
+.steps ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.step { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; animation: rise 0.25s ease both; }
+.step.sub { margin-left: 18px; font-size: 12.5px; }
+.step i { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-top: 7px; }
+.step.sub i { background: var(--rule); }
+.step.running i { background: var(--accent-soft); border: 1.5px solid var(--accent); width: 8px; height: 8px; margin-top: 6px; animation: pulse 1.4s infinite; }
+.step.stopped i { background: var(--warn); }
 .step.done .step-text { color: var(--ink-2); }
 .step.running .step-text { color: var(--ink); font-weight: 500; }
 .step.stopped .step-text { color: var(--muted); }
-.step-detail { display: block; font-size: 11.5px; color: var(--warn); margin-top: 2px; }
-.badge { flex: none; display: inline-block; min-width: 36px; text-align: center; font: 600 9.5px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em; padding: 4px 5px; border-radius: 3px; margin-top: 2px; }
-.badge.ai { background: var(--accent); color: #fff; }
-.badge.code { background: transparent; color: var(--ink-2); border: 1px solid var(--rule); padding: 3px 4px; }
-.badge.you { background: var(--warm-soft); color: var(--warm); }
-.process-foot { margin: 0; padding: 12px 16px; border-top: 1px solid var(--rule); font-size: 11.5px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.step-detail { display: block; font-size: 12px; color: var(--warn); margin-top: 2px; }
 
 .dots::after { content: ""; display: inline-block; width: 1.2em; text-align: left; animation: dots 1.2s steps(4, end) infinite; }
 @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75%, 100% { content: "..."; } }
