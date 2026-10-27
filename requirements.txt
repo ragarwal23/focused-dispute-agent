@@ -7,3 +7,5 @@ openpyxl>=3.1,<4
 pydantic>=2.11,<3
 python-dotenv>=1.1,<2
 pytest>=9,<10
+fastapi>=0.115,<1
+uvicorn>=0.30,<1
