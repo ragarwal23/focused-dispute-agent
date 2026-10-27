@@ -14,7 +14,11 @@ The agent does the digging. It drafts one review case: the recommended human que
 
 ## The graph
 
-Code decides what runs next; the LLM classifies, runs the two agents and drafts. Every run takes the solid path; the dashed edge runs only when the rep answers an open question, at most once. Built in [graph.py](dispute_agent/orchestrator/graph.py); every box is explained in [architecture.md](docs/architecture.md), and the whole system is on one page in the [architecture diagram](docs/diagrams/architecture.png).
+**Start with the [architecture diagram](docs/diagrams/architecture.png).** It explains the whole system on one page: the graph, both agents, their tools and where the human review sits.
+
+[![Architecture diagram](docs/diagrams/architecture.png)](docs/diagrams/architecture.png)
+
+Code decides what runs next; the LLM classifies, runs the two agents and drafts. Every run takes the solid path; the dashed edge runs only when the rep answers an open question, at most once. Built in [graph.py](dispute_agent/orchestrator/graph.py).
 
 ```mermaid
 flowchart TD
