@@ -74,7 +74,7 @@ def fill(c, verdict: Any) -> None:
 
 
 def cited_by_account_agent(row: dict[str, Any]) -> set[str]:
-    """Every event ID the Account Agent's findings mention (the JSON keeps no raw_cited; this is the same set)."""
+    """Every event ID the Account Agent's findings mention: relevant, candidate and disputed, the set score() checks."""
     f = row.get("findings") or {}
     return set(f.get("relevant_event_ids") or []) | set(f.get("candidate_event_ids") or []) | ({f.get("disputed_event_id")} - {None})
 
@@ -119,7 +119,7 @@ def run_detail(row: dict[str, Any]) -> list[tuple[str, Any]]:
         ("gate_reasons", cell(gate.get("gate_reasons"))), ("sync_issues", cell(sync.get("issues"))),
         ("account_summary", (row.get("findings") or {}).get("summary")), ("tool_calls_made", checks.get("tool_calls")),
         ("tool_errors", cell(row.get("tool_errors"))), ("account_attempts", row.get("account_attempts")),
-        ("policy_attempts", row.get("policy_attempts")), ("thread_id", row.get("thread_id")),
+        ("policy_attempts", row.get("policy_attempts")),
     ]
 
 

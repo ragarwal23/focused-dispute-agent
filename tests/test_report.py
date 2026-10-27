@@ -101,7 +101,7 @@ def test_sheets_and_titles(workbook, ds):
     assert [c.value for c in ws[3]] == ["field", "golden", "actual", "verdict"]
     v = verdicts(ws)
     assert v["route"] == "PASS" and v["category"] == "PASS" and v["confidence"] == "PASS" and v["payment_state"] is None
-    assert "Judge" not in [r[0] for r in ws.iter_rows(values_only=True)] and "thread_id" in table(ws)
+    assert "Judge" not in [r[0] for r in ws.iter_rows(values_only=True)]
     t = table(ws)
     assert t["category"] == ("late_fee_autopay", "late_fee_autopay") and t["route"] == ("explain_events", "explain_events")
     assert t["draft_route"] == (None, "explain_events") and t["disputed_event_id"] == ("E-0117", "E-0117")
@@ -109,7 +109,7 @@ def test_sheets_and_titles(workbook, ds):
     assert t["existing_case_id / case_id"] == (None, "C-004 (created)") and t["confidence"] == (None, "high")
     assert t["rationale / case_note"] == (ds.scenarios["S-01"].rationale, "The fee stands.")
     assert t["tool_calls_made"] == (None, 3) and t["account_summary"] == (None, "cancelled autopay, fee stands")
-    assert t["thread_id"] == (None, None)  # every run-detail row is present, blank when the run has no value
+    assert "thread_id" not in t  # the eval JSON never stores a thread ID (commit 372b170)
     cases = {r[1]: r for r in workbook["Cases"].iter_rows(min_row=2, values_only=True)}
     assert cases["S-01"][7:] == ("explain_events", "explain_events", "E-0117", "E-0117", "no", "yes", "a1/p1", "OK")
     assert cases["S-04"][2] == "heldout" and len(cases) == 16
