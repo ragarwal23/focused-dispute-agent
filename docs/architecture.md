@@ -318,10 +318,12 @@ Two corrections to the plan, found while building. A refused answer re-pauses in
 
 - **No runtime agent selection and no open-ended loops.** The two re-requests are each bounded to one (D0, D5), and so is the rep's follow-up answer (H4). A tool error is recorded and the run continues.
 - **No third agent.** Classification and synthesis stay inside the orchestrator as one LLM call each; sync and the gate are code nodes, not agents.
-- **No UI, streaming, authentication or real integrations.** The rep at the review pause is the person at the terminal; there is no approval queue or audit log.
+- **No authentication or real integrations.** A localhost page (`app/`) streams the graph's steps and hosts the review pause; nothing in the graph changed. There is no approval queue or audit log.
 - **No real money, customers or policy.**
 
 ## Version history
+
+> **v0.7.2:** **Web app** ([plan](plans/web-ui.md)). `app/` holds a FastAPI server that streams the graph's steps over Server-Sent Events and a Vite + React page: the rep's inbox, the step trail with AI / code / you badges, and the review pause with approve, override and answer. No node, prompt, schema or eval changed.
 
 > **v0.7.1:** **Code reorganised to match the diagram.** Each diagram box is one folder in `dispute_agent/` (`orchestrator/`, `account_agent/`, `policy_agent/`, `sync/`, `gate/`, `review/`, plus `evaluation/` outside the run), and every graph node lives in the file named after it. `pipeline.py` became `orchestrator/graph.py`, `classify.py` and `run.py`; the Policy Agent's search moved to `policy_agent/retrieve.py`; the P1–P7 checks moved to `gate/checks.py`; `Draft` moved to `sync/synthesize.py`, which writes it. No behaviour changed. The diagram labels each card with its folder.
 >

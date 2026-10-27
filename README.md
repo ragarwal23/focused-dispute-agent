@@ -28,11 +28,13 @@ A LangGraph agent that investigates a customer's payment dispute and drafts a re
 
 Shared by every box: [`data.py`](dispute_agent/data.py) (record types and the Excel loader for [`data/`](data/)) and [`config.py`](dispute_agent/config.py) (model ID, the fictional "today", limits).
 Outside the run: [`evaluation/`](dispute_agent/evaluation/) scores the scenarios ([`evaluate.py`](dispute_agent/evaluation/evaluate.py)) and checks stability and LangSmith traces ([`validate.py`](dispute_agent/evaluation/validate.py)).
+Also outside the run: [`app/`](app/) is the rep's web page. [`server.py`](app/server.py) streams the same graph's steps, and [`narrate.py`](app/narrate.py) turns each node into a plain-language line marked AI, code or you.
 
 ## Repo layout
 
 ```
 dispute_agent/          the agent: one folder per diagram box (table above)
+app/                    the web page: server.py + narrate.py (Python), src/ (React), Vite config
   __main__.py           the CLI: show, ask, resume, eval, stability, trace
   config.py, data.py    shared settings and record types
 tests/                  one test file per source file, no LLM calls; shared fakes in conftest.py
@@ -51,6 +53,7 @@ runs/                   git-ignored output: eval reports and checkpoints.sqlite 
 | [`test_sync.py`](tests/test_sync.py), [`test_synthesize.py`](tests/test_synthesize.py) | the sync folder |
 | [`test_gate.py`](tests/test_gate.py) | the gate and its P1–P7 checks, on all 16 scenarios |
 | [`test_create_review_case.py`](tests/test_create_review_case.py) | the write: duplicates and the rep's override |
+| [`test_narrate.py`](tests/test_narrate.py), [`test_server.py`](tests/test_server.py) | the web app: the step labels and the HTTP contract |
 | [`test_data.py`](tests/test_data.py), [`test_evaluate.py`](tests/test_evaluate.py), [`test_validate.py`](tests/test_validate.py) | the loader and the evaluation tools |
 
 ## Run it
@@ -73,6 +76,17 @@ python -m dispute_agent stability runs/eval_*.json --known S-11:route_ok
 python -m dispute_agent trace --last 12
 pytest
 ```
+
+### Web app
+
+```bash
+python -m app.server                  # API on 127.0.0.1:8000 (--port to change)
+cd app && npm ci && npm run dev       # the page on http://localhost:5173 (API_PORT=... if the API is not on 8000)
+```
+
+The inbox holds the 12 dev complaints (never the held-out four, never the answer key). Click one and watch each step
+as it runs, then approve, override, or answer at the pause. "Log a phone call" starts a new complaint on any account.
+Runs share `runs/checkpoints.sqlite` with the CLI, so a thread paused in the page can be resumed with `resume`.
 
 Every `ask` pauses at the `review` node; its state is saved in `runs/checkpoints.sqlite`, so `resume` can continue it
 later in a new process. `eval` never pauses: it approves every run, so its scores measure the agents and the gate.
