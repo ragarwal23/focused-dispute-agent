@@ -12,6 +12,7 @@
   - **Two pause points, one node.** The rep approves or overrides before `create_review_case` on every run, and can answer open questions when the route is `need_more_evidence`. Both happen at the same place in the graph, after the gate, so they are one `review` node with one interrupt payload.
   - **The eval never pauses.** `investigate()` auto-approves every pause, so the 12 dev scenarios run unattended and the scores stay comparable to today's 11/12 route.
   - **Checkpoints live in a SQLite file** (`runs/checkpoints.sqlite`, git-ignored), one new dependency. `ask` exits at the pause; `resume <thread>` continues in a new process. LangSmith shows the two runs on one thread.
+- **Built 2026-10-26, with two corrections recorded in [architecture.md](../architecture.md) v0.7 (H section):** a refused answer re-pauses inside `review` instead of raising `ValueError` (LangGraph replays a stored resume value, so a raise would never clear), and the checkpoint serializer lists our state models explicitly. Work went on `main`, not a branch. The `ValueError` text below is the plan as written.
 - Plain words for the two new terms, for the docs: a **checkpointer** is a save-game file for the graph's one shared state object, written after every node; an **interrupt** is a pause point where the graph stops, hands the caller a payload, and later continues from the same save with the person's answer.
 
 ## 2. Why & goal

@@ -1,6 +1,7 @@
 """create_review_case: the agent's only write, simulated. No LLM.
 
-Runs after the gate on every run, rejection included: the rep still needs a case, filed under the forced route.
+Runs after the rep's review on every run, gate rejection included: the rep still needs a case, filed under the
+forced route, or under the rep's route when they overrode it (docs/plans/human-review.md, H8).
 Idempotent: the gate already looked for an open case with the same account, category and disputed event
 (`existing_case_id`). When there is one, that case is returned and nothing is created. Otherwise a new case ID
 is minted from the dataset's case count. Nothing is persisted, so the same complaint run twice mints the same ID;
@@ -25,13 +26,14 @@ class CaseResult(BaseModel):
     account_id: str
     category: Category
     disputed_event_id: str | None
-    route: Route  # the final route, after the gate
+    route: Route  # the final route: the rep's override, else the gate's
 
 
 def create_review_case(
-    ds: Dataset, account_id: str, category: Category, derived: DerivedFacts, verdict: GateResult
+    ds: Dataset, account_id: str, category: Category, derived: DerivedFacts, verdict: GateResult,
+    route_override: Route | None = None,
 ) -> CaseResult:
-    """Return the open duplicate if the gate found one, else mint the next case ID."""
+    """Return the open duplicate if the gate found one, else mint the next case ID. The gate's result is left as is."""
     existing = verdict.existing_case_id
     return CaseResult(
         case_id=existing or f"C-{len(ds.review_cases) + 1:03d}",
@@ -39,5 +41,5 @@ def create_review_case(
         account_id=account_id,
         category=category,
         disputed_event_id=derived.disputed_event_id,
-        route=verdict.route,
+        route=route_override or verdict.route,
     )

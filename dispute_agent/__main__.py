@@ -1,7 +1,8 @@
 """Command line: look at data, run complaints and evals, or validate their stability and traces.
 
     python -m dispute_agent show [A-1002]
-    python -m dispute_agent ask A-1002 "cust got hit w a late fee ... conf # ends in 8812"
+    python -m dispute_agent ask A-1002 "cust got hit w a late fee ... conf # ends in 8812" [--approve]
+    python -m dispute_agent resume A-1002-20261027T101500Z (--approve | --route R --reason "..." | --answer "...")
     python -m dispute_agent eval [--split dev] [--scenario S-01] [--min-disputed-acc 0.75] [--min-policy-recall 0.75] [--min-route-acc 0.75]
 """
 
@@ -13,17 +14,23 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from langchain_core.messages import AIMessage, ToolMessage
 
 from .account_agent import build_account_agent
-from .data import load_dataset
+from .data import Route, load_dataset
 from .derive import derived_json
 from .evaluate import run_eval
-from .pipeline import investigate
+from .pipeline import (
+    Investigation, build_graph, new_thread_id, resume, sqlite_checkpointer, start, thread_config, thread_status,
+)
 from .policy_agent import load_policies
+from .review import APPROVE, Pause, ReviewDecision
 from .validate import stability, trace_check
+
+CHECKPOINTS = Path("runs") / "checkpoints.sqlite"  # paused runs; delete it to forget them
+TAGS = ["slice=investigate", "cli"]
 
 
 def _ts(dt: datetime | None) -> str:
@@ -95,21 +102,11 @@ def _print_tool_calls(account: dict[str, Any], quiet: bool) -> None:
                 print(f"   {text[:300]}{'...' if len(text) > 300 else ''}")
 
 
-def cmd_ask(args: argparse.Namespace) -> int:
-    """Run every step on one complaint and print what each step produced."""
-    ds = load_dataset(args.data)
-    if args.account_id not in ds.accounts:
-        print(f"unknown account {args.account_id}; known: {', '.join(sorted(ds.accounts))}")
-        return 2
-    sections = load_policies(Path(args.data) / "policies")
-    inv = investigate(
-        ds, sections, build_account_agent(ds), args.account_id, args.message,
-        tags=["slice=investigate", "cli"], label=args.account_id,
-    )
-    account, policy, g = inv.account, inv.policy, inv.gate
-
-    print(f"category: {inv.category}\n")
-    _print_tool_calls(account, args.quiet)
+def _print_sections(v: dict[str, Any], quiet: bool) -> None:
+    """Print what each step produced, read from the graph's state (there is no Investigation yet at a pause)."""
+    account, policy, g = v["account"], v["policy"], v["gate"]
+    print(f"category: {v['category']}\n")
+    _print_tool_calls(account, quiet)
     print("\nfindings:")
     print(json.dumps(account["findings"].model_dump() if account["findings"] else None, indent=2))
     print(
@@ -117,7 +114,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         f"tool_errors={account['tool_errors']}"
     )
     print("\nderived (code):")
-    print(json.dumps(derived_json(inv.derived), indent=2))
+    print(json.dumps(derived_json(v["derived"]), indent=2))
     print(f"\npolicy read on {policy.policy_date:%Y-%m-%d} ({policy.policy_date_basis}); retrieved (ranked):")
     for r in policy.retrieved:
         s, via = r.section, f" via {r.via}" if r.via else ""
@@ -127,13 +124,13 @@ def cmd_ask(args: argparse.Namespace) -> int:
         print(f"{rule.section_id} {rule.outcome} ambiguous={rule.policy_ambiguous} {rule.why}")
     print(f"policy errors={policy.errors} dropped={policy.dropped_section_ids}")
 
-    issues = "; ".join(inv.sync.issues) or "no issues"
-    print(f"\nsync (code): {issues}  lean={inv.sync.lean}  account attempts: {inv.account_attempts}  policy attempts: {inv.policy_attempts}")
+    issues = "; ".join(v["sync"].issues) or "no issues"
+    print(f"\nsync (code): {issues}  lean={v['sync'].lean}  account attempts: {v['account_attempts']}  policy attempts: {v['policy_attempts']}")
     print("\ndraft (LLM):")
-    if inv.synthesis.draft:
-        print(json.dumps(inv.synthesis.draft.model_dump(), indent=2))
+    if v["synthesis"].draft:
+        print(json.dumps(v["synthesis"].draft.model_dump(), indent=2))
     else:
-        print(f"none: {inv.synthesis.errors}")
+        print(f"none: {v['synthesis'].errors}")
 
     print("\ngate (code):")
     print(f"route={g.route} gate_rejected={g.gate_rejected} reasons={g.gate_reasons} existing_case_id={g.existing_case_id}")
@@ -143,7 +140,79 @@ def cmd_ask(args: argparse.Namespace) -> int:
         line = f"{c.section_id} {c.check}" + (f"={c.result}" if c.result else "")
         cited.append(line + (f" rules out {c.rules_out}" if c.rules_out else ""))
     print("cited sections: " + (" · ".join(cited) or "none"))
-    print(f"\ncreate_review_case (code): {inv.case.case_id} created={inv.case.created} route={inv.case.route}")
+
+
+def _print_outcome(out: Investigation | Pause) -> None:
+    """The pause block (what the rep can do next), or the filed case and who decided it."""
+    if isinstance(out, Investigation):
+        r = out.review
+        who = "approved" if r.action == "approve" else f"override to {r.route}: {r.reason}"
+        print(f"\ncreate_review_case (code): {out.case.case_id} created={out.case.created} route={out.case.route}  decided by: rep ({who})")
+        return
+    r, t = out.request, out.thread_id
+    used = f"  (answers used: {r.followups} of {r.followups + int(r.can_answer)})" if r.followups else ""
+    gate = "gate rejected: " + "; ".join(r.gate_reasons) if r.gate_rejected else "gate ok"
+    questions = f"  open questions: {' | '.join(r.open_questions)}" if r.open_questions else ""
+    print(f"\npaused for review: thread {t}{used}\n  route {r.route} ({gate}){questions}")
+    print(f"  resume with:  resume {t} --approve\n{'':16}resume {t} --route <route> --reason \"...\"")
+    if r.can_answer:
+        print(f"{'':16}resume {t} --answer \"...\"")
+
+
+def cmd_ask(args: argparse.Namespace) -> int:
+    """Run every step on one complaint, print what each step produced, and pause for the rep (or approve with --approve)."""
+    ds = load_dataset(args.data)
+    if args.account_id not in ds.accounts:
+        print(f"unknown account {args.account_id}; known: {', '.join(sorted(ds.accounts))}")
+        return 2
+    sections = load_policies(Path(args.data) / "policies")
+    graph = build_graph(ds, sections, build_account_agent(ds), checkpointer=sqlite_checkpointer(CHECKPOINTS))
+    thread_id = new_thread_id(args.account_id)
+    print(f"thread: {thread_id}  (if this run crashes, `resume {thread_id} --approve` continues it)\n")
+    out = start(graph, args.account_id, args.message, thread_id, TAGS, args.account_id)
+    _print_sections(graph.get_state(thread_config(thread_id)).values, args.quiet)
+    if args.approve:
+        while isinstance(out, Pause):
+            out = resume(graph, thread_id, APPROVE, TAGS, args.account_id)
+    _print_outcome(out)
+    return 0
+
+
+def cmd_resume(args: argparse.Namespace) -> int:
+    """Continue a paused run with the rep's decision. Checks the thread before any model is built."""
+    ds = load_dataset(args.data)
+    sections = load_policies(Path(args.data) / "policies")
+    config = thread_config(args.thread_id)
+    probe = build_graph(ds, sections, None, checkpointer=sqlite_checkpointer(CHECKPOINTS))
+    status = thread_status(probe, args.thread_id)
+    if status == "unknown":
+        print(f"no paused run for thread {args.thread_id}")
+        return 2
+    snap = probe.get_state(config)
+    if status == "finished":
+        print(f"thread {args.thread_id} already finished: case {snap.values['case'].case_id}")
+        return 2
+    pending = [i.value for task in snap.tasks for i in task.interrupts]
+    if args.answer and pending and not pending[0]["can_answer"]:
+        print("this pause takes --approve or --route only")
+        return 2
+    if not pending:
+        print(f"no pause was waiting: the run stopped at {', '.join(snap.next)}; continuing it from there. This decision "
+              "is not used: the run pauses at review again, or, past review, files under the decision made there")
+
+    if args.approve:
+        decision = APPROVE
+    elif args.route:
+        decision = ReviewDecision(action="override", route=args.route, reason=args.reason)
+    else:
+        decision = ReviewDecision(action="answer", answer=args.answer)
+    graph = build_graph(ds, sections, build_account_agent(ds), checkpointer=sqlite_checkpointer(CHECKPOINTS))
+    label, before = snap.values["thread_label"], snap.values["followups"]
+    out = resume(graph, args.thread_id, decision, TAGS, label)
+    after = graph.get_state(config).values
+    if after["followups"] > before or not pending:  # the agents ran again: show what they found this time
+        _print_sections(after, args.quiet)
+    _print_outcome(out)
     return 0
 
 
@@ -179,6 +248,15 @@ def main(argv: list[str] | None = None) -> int:
     ask.add_argument("account_id")
     ask.add_argument("message")
     ask.add_argument("--quiet", action="store_true", help="hide tool results, show only the calls")
+    ask.add_argument("--approve", action="store_true", help="approve at the review pause and file the case now")
+    res = sub.add_parser("resume", help="continue a paused run with the rep's decision")
+    res.add_argument("thread_id")
+    res.add_argument("--quiet", action="store_true", help="hide tool results, show only the calls")
+    decide = res.add_mutually_exclusive_group(required=True)
+    decide.add_argument("--approve", action="store_true", help="file the case under the gate's route")
+    decide.add_argument("--route", choices=get_args(Route), help="file it under this route instead (needs --reason)")
+    decide.add_argument("--answer", help="answer the open questions; the Account Agent looks again once")
+    res.add_argument("--reason", help="why the route was overridden")
     ev = sub.add_parser("eval", help="run and score scenarios")
     ev.add_argument("--split", default="dev", choices=["dev", "heldout"])
     ev.add_argument("--scenario", help="one scenario ID, e.g. S-01")
@@ -191,7 +269,10 @@ def main(argv: list[str] | None = None) -> int:
     trace = sub.add_parser("trace", help="verify recent LangSmith graph trace shapes")
     trace.add_argument("--last", type=int, default=1, metavar="N")
     args = p.parse_args(argv)
-    return {"show": cmd_show, "ask": cmd_ask, "eval": cmd_eval, "stability": cmd_stability, "trace": cmd_trace}[args.cmd](args)
+    if args.cmd == "resume" and bool(args.route) != bool(args.reason):
+        p.error("--route and --reason go together")
+    commands = {"show": cmd_show, "ask": cmd_ask, "resume": cmd_resume, "eval": cmd_eval, "stability": cmd_stability, "trace": cmd_trace}
+    return commands[args.cmd](args)
 
 
 if __name__ == "__main__":

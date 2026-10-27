@@ -1,10 +1,10 @@
 from datetime import datetime, timezone
 
-from dispute_agent.validate import NORMAL, expected_children, stability, trace_check
+from dispute_agent.validate import NORMAL, expected_children, expected_resume_children, stability, trace_check
 
 
 def test_expected_children():
-    assert expected_children(1, 1) == NORMAL
+    assert expected_children(1, 1) == NORMAL and NORMAL[-1] == "review"
     assert expected_children(2, 1) == NORMAL[:5] + ["account_agent_retry", "derive_states_retry", "sync"] + NORMAL[5:]
     assert expected_children(1, 2) == NORMAL[:5] + ["policy_agent_retry", "sync"] + NORMAL[5:]
     assert expected_children(2, 2) == NORMAL[:5] + ["account_agent_retry", "derive_states_retry", "sync", "policy_agent_retry", "sync"] + NORMAL[5:]
@@ -53,3 +53,23 @@ def test_trace_check_match_and_mismatch():
 def test_trace_check_waits_then_exits_2():
     lines, ok = trace_check(FakeClient([], []), "project", wait=0)
     assert ok is False and lines == ["no qualifying run found within 0s (wanted 1, found 0)"]
+
+
+def test_resume_shapes():
+    assert expected_resume_children(False) == [
+        "review", "account_agent_followup", "derive_states_followup", "sync", "synthesize", "gate", "review"]
+    assert expected_resume_children(True)[4:6] == ["policy_agent_retry", "sync"]
+
+
+def test_trace_check_resume_root():
+    """An answer-path resume root is checked against its own shapes; its attempt counts do not matter."""
+    root = _run(id="root", trace_id="trace", name="dispute A-1016 resume", tags=["slice=investigate", "resume"],
+                prompt_tokens=5, outputs={"account_attempts": 2, "policy_attempts": 1, "followups": 1})
+    children = [_run(id=str(i), parent_run_id="root", name=n) for i, n in enumerate(expected_resume_children(False))]
+    lines, ok = trace_check(FakeClient([root], children), "project", wait=0)
+    assert ok is True and lines[-1].endswith("match")
+    lines, ok = trace_check(FakeClient([root], children[:-1]), "project", wait=0)
+    assert ok is False and "MISMATCH" in lines[-1]
+    recovery = {**root, "outputs": {"account_attempts": 1, "policy_attempts": 1, "followups": 0}}
+    lines, ok = trace_check(FakeClient([recovery], children[:3]), "project", wait=0)
+    assert ok is True and lines == ["dispute A-1016 resume: recovery resume, shape not checked"]

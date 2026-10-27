@@ -1,14 +1,14 @@
 # Architecture
 
-**v0.6.1 | October 26, 2026** | Built from [the brief](project_brief.md) v0.8 and [the data contract](data_contract.md) v1.2. Brief v0.8 matches this document.
+**v0.7 | October 26, 2026** | Built from [the brief](project_brief.md) v0.9 and [the data contract](data_contract.md) v1.2. Brief v0.9 matches this document.
 
-![Engineering architecture](diagrams/architecture_v0.6.png)
+![Engineering architecture](diagrams/architecture_v0.7.png)
 
 ---
 
 ## In one paragraph
 
-A rep pastes a customer's complaint and the account ID. The **orchestrator** is a LangGraph graph: code, not the LLM, decides what runs next. It uses the LLM for two jobs of its own, naming the dispute type and synthesizing the findings into a draft, and sends two specialist agents out **in parallel**. The **Account Agent** investigates the account and proposes the disputed event, and code derives the payment and refund states from that event's chain. The **Policy Agent** retrieves the policy sections in force on the complaint date, and one LLM call turns them into structured rules with citations. A **sync step** in code is the join where both agents report back: it confirms the two sets of findings line up, marks anything missing as unknown, and can send each agent back once, the Account Agent if it returned nothing and the Policy Agent if a different policy set was in force on the disputed event's date. A **deterministic gate** in plain Python then runs our own checks for each cited policy section against the account's events. If the route contradicts a check, or the policy reading is ambiguous, the route is forced to `manual_escalation`. The agent's only write creates a simulated review case. A **human rep** reads the draft and decides. Adjustments, waivers and refunds happen in the **servicing backend**, which the agent cannot reach.
+A rep pastes a customer's complaint and the account ID. The **orchestrator** is a LangGraph graph: code, not the LLM, decides what runs next. It uses the LLM for two jobs of its own, naming the dispute type and synthesizing the findings into a draft, and sends two specialist agents out **in parallel**. The **Account Agent** investigates the account and proposes the disputed event, and code derives the payment and refund states from that event's chain. The **Policy Agent** retrieves the policy sections in force on the complaint date, and one LLM call turns them into structured rules with citations. A **sync step** in code is the join where both agents report back: it confirms the two sets of findings line up, marks anything missing as unknown, and can send each agent back once, the Account Agent if it returned nothing and the Policy Agent if a different policy set was in force on the disputed event's date. A **deterministic gate** in plain Python then runs our own checks for each cited policy section against the account's events. If the route contradicts a check, or the policy reading is ambiguous, the route is forced to `manual_escalation`. The graph then **pauses for a human rep**, who approves the route, overrides it with a reason, or, when the route is `need_more_evidence`, answers the open questions once so the Account Agent can look again. Only then does the agent's one write create a simulated review case. Adjustments, waivers and refunds happen in the **servicing backend**, which the agent cannot reach.
 
 The analogy: a **kitchen ticket system** (LangGraph) that decides the order of work, a **head chef** (the LLM) who only names the dish and plates it, two **line cooks** (the agents) working at the same time on their own stations, the **pass** (the sync step) where both plates are checked together and a plate can be sent back once, a **health inspector** who checks every plate against the house rulebook rather than the chef's notes (the gate), and a **customer** who decides whether to eat it (the rep). The kitchen never handles the cash register.
 
@@ -22,11 +22,11 @@ The analogy: a **kitchen ticket system** (LangGraph) that decides the order of w
 | 2 | **Orchestrate** | LangGraph (code), LLM for two calls | Code: fan out to both agents, hold state, route failures, sync, the two bounded re-requests. LLM: classify, synthesize the draft |
 | 3 | **Investigate** | LLM + tools, two agents in parallel, then a code sync join | Account Agent reads records and notes and finds the disputed event; Policy Agent retrieves and interprets the rules in force on the complaint date; sync cross-checks both and re-requests at most once each |
 | 4 | **Gate** | Code | Runs our Python policy checks, IDs, dates and duplicates against the draft; policy ambiguity escalates |
-| 5 | **Approve** | Human, then backend | The rep decides; only the secured backend moves money |
+| 5 | **Review** | Human, inside the graph; then the backend | The graph pauses; the rep approves, overrides or answers once; the case is filed. Only the secured backend moves money |
 
 ## The graph
 
-After classify, the two agents run in parallel and meet at sync, a join node. Sync holds the graph's one routing decision: it can send the Account Agent back once (no findings) and the Policy Agent back once (a different policy set was in force on the disputed event's date), the dashed edges; then the run always continues. Every other failure is written to state, not branched on. The one decision that overrides the LLM, forcing `manual_escalation`, happens inside the gate and is recorded in `gate_rejected`. Built as a `StateGraph` in [pipeline.py](../dispute_agent/pipeline.py); one run is one parent trace.
+After classify, the two agents run in parallel and meet at sync, a join node. Sync holds the graph's one routing decision: it can send the Account Agent back once (no findings) and the Policy Agent back once (a different policy set was in force on the disputed event's date), the dashed edges; then the run always continues. Every other failure is written to state, not branched on. The one decision that overrides the LLM, forcing `manual_escalation`, happens inside the gate and is recorded in `gate_rejected`. After the gate the graph **pauses at `review`** for the rep (section 5); the graph's second routing decision, `after_review`, files the case or, when the rep answered, sends the Account Agent back once through its own follow-up nodes. Built as a `StateGraph` in [pipeline.py](../dispute_agent/pipeline.py), compiled with a checkpointer so a paused run can be resumed later; each `invoke` is one parent trace.
 
 ```mermaid
 flowchart TD
@@ -42,8 +42,11 @@ flowchart TD
     policy_agent_retry -.-> sync
     sync --> synthesize["synthesize<br/><i>LLM</i>"]
     synthesize --> gate["gate<br/><i>code: our P1–P7 checks</i>"]
-    gate --> create_review_case["create_review_case<br/><i>code, simulated write</i>"]
-    create_review_case --> END([drafted case to the rep])
+    gate --> review{{"review<br/><i>pause: the rep approves, overrides or answers</i>"}}
+    review -->|approve or override| create_review_case["create_review_case<br/><i>code, simulated write</i>"]
+    review -.->|rep answered, once| account_agent_followup["account_agent_followup → derive_states_followup"]
+    account_agent_followup -.-> sync
+    create_review_case --> END([case filed under the rep's route])
 ```
 
 ---
@@ -60,9 +63,9 @@ flowchart TD
 | **Handle failures** | Code | A budget hit, the exact text of a tool error, or "found nothing useful" is recorded in state and the run continues; that finding counts as unknown (D4, D5) |
 | **Sync** | Code | Joins both agents' findings, cross-checks them, and may send each agent back once. See 3c |
 | **Synthesize** | LLM | One call with structured output, after sync: route, cited events and policy sections, facts, confidence, open questions, case note |
-| **Hand off** | Code | The draft goes to the gate. The orchestrator never calls the backend |
+| **Hand off** | Code | The draft goes to the gate, then the graph pauses for the rep (section 5). The orchestrator never calls the backend |
 
-**Fixed graph shape.** The graph always runs classify, both agents in parallel, sync, synthesis, the gate and the write. Nothing decides at runtime which agents to call. Sync may add at most one more run of each agent, by code rules (3c), so a trace has one of four shapes and the two attempt counts say which. The precise claim is that the **outer graph shape is fixed**: inside the Account Agent the LLM does choose its own tool calls, from one to six. Decided Oct 24 (D0), revised Oct 25 (v0.4, then v0.5) and Oct 26 (v0.6, back to the v0.4 shape).
+**Fixed graph shape.** The graph always runs classify, both agents in parallel, sync, synthesis, the gate, the review pause and the write. Nothing decides at runtime which agents to call. Sync may add at most one more run of each agent, by code rules (3c), so the first parent run has one of four shapes, ending at the `review` pause, and the two attempt counts say which. A rep's answer adds a resume run of one of two shapes (with or without a re-retrieve); approve and override resumes run only `review` and `create_review_case`. The precise claim is that the **outer graph shape is fixed**: inside the Account Agent the LLM does choose its own tool calls, from one to six. Decided Oct 24 (D0), revised Oct 25 (v0.4, then v0.5) and Oct 26 (v0.6, back to the v0.4 shape).
 
 **Why in parallel.** The two investigations are independent until sync: the Policy Agent needs only the category and the complaint, both known after classify. Reading the policy on the complaint date is right whenever the same policy set was in force on the disputed event's date, which sync checks in code once that date is known; when it was not, one re-retrieve on the right date fixes it (3c). The cost is a first policy read without the account's facts; the rules are advisory (D7), so nothing the gate enforces depends on that read.
 
@@ -173,13 +176,25 @@ Checks, in order:
 
 **Why code and not the LLM:** these are yes/no rules with right answers. The LLM interprets the policy text; code enforces the result. An LLM would sometimes get them wrong, and injected memo text could talk it out of them. Checking the LLM against rules the same LLM wrote would enforce its misreadings faithfully, so the gate's rules are written by us.
 
-## 5. Approve — human, then backend
+## 5. Review — a human, inside the graph; then the backend
+
+The graph **pauses** at the `review` node after the gate. LangGraph saves the graph's state after every node (a *checkpointer*: a save-game file, `runs/checkpoints.sqlite` for the CLI); the pause (an *interrupt*) hands the caller a payload and later continues from the same save with the rep's answer, in the same process or a new one (`resume <thread>`). Code renders the payload and records the decision; no LLM runs in this node. Built in [review.py](../dispute_agent/review.py) and [pipeline.py](../dispute_agent/pipeline.py), planned in [plans/human-review.md](plans/human-review.md).
+
+| Rep action | When | What happens |
+|---|---|---|
+| **approve** | Always | The case is filed under the gate's route |
+| **override** | Always; needs a reason | The case is filed under the rep's route; the gate's result is left as the gate decided (H8) |
+| **answer** | Only when the route is `need_more_evidence` and no answer has been used | The answer is added to the complaint as `Rep follow-up (after review): ...`; the Account Agent runs again through `account_agent_followup` → `derive_states_followup` → sync → synthesize → gate, and the graph pauses again. At most once (`MAX_FOLLOWUPS = 1`); the second pause offers approve or override only |
+
+**Live example (Oct 26, S-15's account, thread `A-1016-20261027T030830Z`).** `ask A-1016 "where is my refund?? been weeks"` paused at `need_more_evidence` with the open question "Which refund is the customer asking about: the $25.00 late fee refund (E-0128) or the $731.50 duplicate September payment refund (E-0138)?". `resume ... --answer "customer means the $731.50 refund requested Oct 6"` ran the Account Agent again: it picked E-0138, `fact_ambiguous` turned false, sync found no issues (account attempts 2, policy attempts 1), and the new draft routed `explain_events` with the gate's agreement, because the Oct 6 request is still inside the 10-business-day refund window. The second pause offered approve or override only; `resume ... --approve` filed C-004 under `explain_events`. In LangSmith the thread has three parent runs: `dispute A-1016` (ends at `review`), the answer-path `dispute A-1016 resume` (`review > account_agent_followup > derive_states_followup > sync > synthesize > gate > review`) and a token-free approve resume.
+
+The **eval never pauses**: `investigate()` approves every pause, so the scores measure the agents and the gate, not a person. A run that crashed mid-way (an API error) is also resumable: `ask` prints the thread ID first, and `resume <thread>` re-runs the failed node from its checkpoint. The decision given then is not used: a run that crashed before `review` pauses there again, and one that crashed in `create_review_case` files under the decision already made at the pause.
 
 | Step | Who | What |
 |---|---|---|
-| **Create review case** | Code | Simulated and idempotent; built as [create_review_case.py](../dispute_agent/create_review_case.py). Runs after the gate on every run, rejection included, and files the case under the final route. If an open duplicate exists, it returns that case and creates nothing. Tests in the data: C-001 is closed, so it must not block S-05; C-002 is open, so it must block S-11; C-003 is open in a different category, so it must not block S-13 |
+| **Create review case** | Code | Simulated and idempotent; built as [create_review_case.py](../dispute_agent/create_review_case.py). Runs after the review on every run, gate rejection included, and files the case under the final route: the rep's override, else the gate's. If an open duplicate exists, it returns that case and creates nothing. Tests in the data: C-001 is closed, so it must not block S-05; C-002 is open, so it must block S-11; C-003 is open in a different category, so it must not block S-13 |
 | **Drafted case** | Agent output | Route, cited evidence and rules, facts, confidence, open questions, editable 3–5 sentence note |
-| **Human rep approval** | Rep | Reads, edits, files. The rep decides, not the agent |
+| **Human rep review** | Rep, at the pause | Approves, overrides with a reason, or answers once. The rep decides, not the agent. Editing the note or the citations happens outside the agent |
 | **Servicing backend** | Secured services | Adjustments, waivers, refunds. The agent has no credentials for it, so it cannot move money even if every other layer fails |
 
 ---
@@ -198,6 +213,7 @@ The design rule: **language goes to the LLM, rules and control flow go to code.*
 | `review_route` | LLM, code can override | Orchestrator synthesize; gate forces `manual_escalation` on rejection or policy ambiguity |
 | `confidence`, `open_questions`, `case_note` | LLM | Orchestrator synthesize |
 | `case_id` | Code | Create review case |
+| Final route on the case | Rep, code records | The gate's route, unless the rep overrode it at `review` (H8) |
 | `gate_rejected`, `gate_reasons` | Code | Gate (D6) |
 
 ## Graph state
@@ -217,6 +233,7 @@ One object travels through the graph. Each step reads it and adds its own fields
 | `draft` (route, cited events and sections, confidence, open questions, case note) or the synthesize error | Orchestrator, synthesize |
 | `check_results` (all five checks: `true`, `false` or `unknown`) and `section_checks` (per cited section: its check, verdict and the route ruled out) | Gate |
 | `gate_rejected`, `gate_reasons`, `existing_case_id` | Gate |
+| `thread_label`, `review` (the rep's last decision: approve, override with route and reason, or answer), `followups` (0 or 1), `rep_answer` | Input; the `review` node; the follow-up node |
 | `case` (`case_id`, `created`, account, category, disputed event, final route) | Create review case |
 
 ---
@@ -245,7 +262,7 @@ validation-only `DISPUTE_FAULT` switch can exercise each bounded re-request path
 
 - **Claude Sonnet 5.5** makes the orchestrator's two LLM calls, classify and synthesize, and runs both agents. LangGraph, not a model, runs the workflow.
 - **Claude Opus 5.5** judges case notes in evals, so the agent isn't graded by the model that wrote the answer.
-- **LangSmith** traces every span. The graph run `dispute <label>` is the parent; every node (classify, both agents, derive, sync, any retry, synthesize, gate, create_review_case) is a child, so a failure is traceable to the step that caused it and the trace's shape shows whether a re-request fired. Runs are tagged with scenario ID, category, trap, wording and note_driven.
+- **LangSmith** traces every span. Each `invoke` is one parent run: `dispute <label>` up to the pause, then `dispute <label> resume` for each resume, all on one `thread_id`. Approve and override resumes make no model calls. Within a parent run every node (classify, both agents, derive, sync, any retry or follow-up, synthesize, gate, review, create_review_case) is a child, so a failure is traceable to the step that caused it and the trace's shape shows whether a re-request fired. Runs are tagged with scenario ID, category, trap, wording and note_driven.
 
 ---
 
@@ -266,14 +283,36 @@ All decided by Rachit. D0 on Oct 24, 2026; D1–D6 on Oct 25, 2026; D0 and D2 re
 | **D8** | What the agent proposes | **Only a route. The route is the action** | A separate `proposed_action` field | The agent's only power is choosing which human queue gets the case. One field to check |
 | **D9** | Where ambiguity goes | **Split. Unclear policy goes to `manual_escalation`; unclear or missing facts go to `need_more_evidence` with open questions** | All ambiguity goes to `manual_escalation` (v0.4) | A missing fact is for the customer to supply; an unclear policy needs someone with authority. v0.4 would have sent S-15 to the wrong route |
 
+## Human review decisions (v0.7)
+
+Decided and built Oct 26, 2026. Full rationale in [plans/human-review.md](plans/human-review.md).
+
+| # | Decision | Not chosen |
+|---|---|---|
+| **H1** | One pause node, `review`, after the gate; the payload says whether an answer is allowed | Two interrupt nodes, one per pause point |
+| **H2** | Three rep actions: approve, override (route + reason), answer (only on `need_more_evidence`, once) | Editing the note or citations at the pause |
+| **H3** | The answer is folded into `rep_message` with a label; `rep_answer` keeps the raw text | A new prompt input for every downstream node |
+| **H4** | The follow-up has its own nodes, `account_agent_followup` → `derive_states_followup` → sync, bounded by `MAX_FOLLOWUPS = 1` | Re-entering `account_agent`, which hits the join barrier and silently ends the run |
+| **H5** | The graph always compiles with a checkpointer: in memory by default (tests, eval), SQLite in the CLI | A "pause off" switch and two graph shapes |
+| **H6** | `investigate()` keeps its signature and approves every pause; `start` and `resume` are the CLI's entry points | Teaching the eval about pauses |
+| **H7** | Thread IDs are `<label>-<UTC timestamp>` | Random UUIDs a rep cannot read |
+| **H8** | The override is a parameter of `create_review_case`; `GateResult` stays what the gate decided | Rewriting the gate's result |
+| **H9** | Resume parent runs are named `dispute <label> resume` and tagged `resume` | One name for every run of a thread |
+| **H10** | The trace check skips token-free resume roots and checks answer-path resumes against their own shapes | Checking every root against the first-run shape |
+
+Two corrections to the plan, found while building. A refused answer re-pauses inside the node instead of raising: LangGraph keeps the resume value, so raising would replay the refused answer on every later resume and the thread could never be approved. And the checkpoint serializer is given an explicit list of our state models, because LangGraph 1.2 warns on, and has announced it will block, loading any class not on its list.
+
 ## Deliberately not in v1
 
-- **No runtime agent selection and no open-ended loops.** The two re-requests are each bounded to one (D0, D5). A tool error is recorded and the run continues.
+- **No runtime agent selection and no open-ended loops.** The two re-requests are each bounded to one (D0, D5), and so is the rep's follow-up answer (H4). A tool error is recorded and the run continues.
 - **No third agent.** Classification and synthesis stay inside the orchestrator as one LLM call each; sync and the gate are code nodes, not agents.
-- **No UI, streaming, authentication or real integrations.**
+- **No UI, streaming, authentication or real integrations.** The rep at the review pause is the person at the terminal; there is no approval queue or audit log.
 - **No real money, customers or policy.**
 
 ## Version history
+
+> **v0.7:** **Human review inside the graph** ([plan](plans/human-review.md)). The graph compiles with a checkpointer and pauses at a new `review` node after the gate. The rep approves, overrides the route with a reason, or, on `need_more_evidence`, answers once, which reruns the Account Agent through two new follow-up nodes back into sync. `create_review_case` files under the rep's route. The CLI's `ask` pauses (or `--approve`s); `resume <thread>` continues in a new process from `runs/checkpoints.sqlite`. The eval approves every pause, so its scores are unchanged in meaning. H1–H10 added. Brief updated to v0.9. Verified live: dev eval `runs/eval_20261027T031319Z.json` (route 11/12, S-11 the known miss; every other check 12/12; no pause printed), `trace --last 12` all matching the new shape ending at `review`, the approve path on thread `A-1002-20261027T030758Z` and the answer path on `A-1016-20261027T030830Z`.
+>
 
 > **v0.6:** Back to the **v0.4 shape** ([plan](plans/orchestrator.md)). The orchestrator is a real LangGraph `StateGraph`: after classify the two agents fan out **in parallel** and meet at sync, a join node, which may send each agent back once (clarify on no account findings, re-retrieve when a different policy set was in force on the disputed event's date). The Policy Agent's first read is on the complaint date without the account's facts. `create_review_case` is built as the last node. The gate, sync's flags and lean, and synthesize's constrained draft keep their v0.5 behaviour. One run is one parent trace. D0, D2 and D5 revised. Brief updated to v0.8.
 >

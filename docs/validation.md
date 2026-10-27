@@ -5,7 +5,7 @@
 This records execution of the [live-validation plan](plans/live-validation.md): offline behavior, both forced
 re-request paths, three dev-eval repeats, and the twelve most recent normal LangSmith trace shapes. The first
 matrix failed the stability gate on S-07, which led to the F1/F1b Policy Agent prompt fix. After Rachit approved
-eval runs 7–9 on 2026-10-27, a second three-run matrix on the F1b wording passed the stability gate, and the eight
+eval runs 7–9 on 2026-10-26, a second three-run matrix on the F1b wording passed the stability gate, and the eight
 ad-hoc complaints all matched their source scenarios on route and disputed event.
 
 ## Flake matrix
@@ -47,7 +47,7 @@ Account Agent and one Policy Agent call. The observed traces were 13.3–24.0 se
 
 ## Ad-hoc complaints
 
-Run 2026-10-27 with `bash plans/live-validation-adhoc.sh` (exit 0), then `trace --last 8` (exit 0, all eight the
+Run 2026-10-26 with `bash plans/live-validation-adhoc.sh` (exit 0), then `trace --last 8` (exit 0, all eight the
 normal eight-child shape). **8/8 matched on route and disputed event**, against the bet of 6/8. No gate rejections,
 no re-requests, no tool errors.
 
@@ -100,7 +100,7 @@ rate) and the eight ad-hoc complaints ($0.53, measured) bring the total to ≈ $
 
 ## Open findings
 
-- **Closed: F1b validated.** Three dev evals plus `stability` passed (above), approved by Rachit 2026-10-27.
+- **Closed: F1b validated.** Three dev evals plus `stability` passed (above), approved by Rachit 2026-10-26.
 - **Closed: ad-hoc complaints L1–L8 run**, 8/8.
 - **Synthesize can fail outright on S-07.** In one live `ask` after F1b, the draft cited `E-0135` (the other
   customer's payment, which the key forbids). The narrowed `Draft` schema rejected it, and the run ended with no

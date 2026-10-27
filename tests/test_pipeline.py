@@ -4,14 +4,18 @@ from datetime import datetime
 
 from dispute_agent.gate import Draft
 import pytest
+from langgraph.types import Command
 
-from dispute_agent.pipeline import FAULT_POLICY_DATE, MAX_ATTEMPTS, CategoryChoice, build_graph, initial_graph_state, investigate
+from dispute_agent.pipeline import (
+    FAULT_POLICY_DATE, MAX_ATTEMPTS, CategoryChoice, build_graph, initial_graph_state, investigate, thread_config,
+)
 from dispute_agent.policy_agent import PolicyReading
+from dispute_agent.review import APPROVE
 from test_derive import oracle_findings
 from test_policy_agent import FakeModel, rule
 from test_sync import account_state
 
-NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "gate", "create_review_case"]
+NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "gate", "review", "create_review_case"]
 
 
 class FakeAccountAgent:
@@ -25,20 +29,26 @@ class FakeAccountAgent:
         return self.results[min(self.calls, len(self.results)) - 1]
 
 
-def run(ds, sections, agent, sid="S-02"):
-    """Stream the graph with fakes for the three single-call models; return the node order, the final state and the fakes."""
+def run(ds, sections, agent, sid="S-02", decisions=(), checkpointer=None, synthesize_model=None):
+    """Stream the graph with fakes for the three single-call models, answering each pause with the next decision
+    (then approve); return the node order, the final state, the fakes and the graph."""
     s = ds.scenarios[sid]
     classify_model = FakeModel(CategoryChoice(category=s.expected_category, reason="x"))
     policy_model = FakeModel(PolicyReading(rules=[rule(i) for i in s.expected_policy_ids], summary="x"))
     draft = Draft(review_route=s.expected_route, event_ids=s.expected_required_event_ids, policy_source_ids=s.expected_policy_ids,
                   confidence="medium", open_questions=["x"], case_note="x")
-    graph = build_graph(ds, sections, agent, classify_model, policy_model, FakeModel(draft))
-    order, final = [], None
-    for mode, chunk in graph.stream(initial_graph_state(s.account_id, s.rep_message), stream_mode=["updates", "values"]):
-        if mode == "updates":
-            order.extend(chunk)
-        else:
-            final = chunk
+    graph = build_graph(ds, sections, agent, classify_model, policy_model, synthesize_model or FakeModel(draft), checkpointer)
+    order, final, decisions = [], None, list(decisions)
+    step = initial_graph_state(s.account_id, s.rep_message, sid)
+    while step is not None:
+        paused = False
+        for mode, chunk in graph.stream(step, thread_config(f"test-{sid}"), stream_mode=["updates", "values"]):
+            if mode == "updates":
+                paused |= "__interrupt__" in chunk
+                order.extend(k for k in chunk if k != "__interrupt__")
+            else:
+                final = chunk
+        step = Command(resume=(decisions.pop(0) if decisions else APPROVE).model_dump()) if paused else None
     return order, final, agent, policy_model, graph
 
 

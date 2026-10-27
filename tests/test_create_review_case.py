@@ -27,3 +27,12 @@ def test_rejected_run_still_files_a_case(ds):
     _, derived = facts(ds, s)
     case = create_review_case(ds, s.account_id, s.expected_category, derived, verdict(None, "manual_escalation"))
     assert case.created is True and case.route == "manual_escalation" and case.disputed_event_id is None
+
+
+def test_override_param(ds):
+    """The rep's route wins on the case; the gate's result keeps the gate's route."""
+    s = ds.scenarios["S-02"]
+    _, derived = facts(ds, s)
+    g = verdict(None, "adjustment_review")
+    case = create_review_case(ds, s.account_id, s.expected_category, derived, g, "manual_escalation")
+    assert case.route == "manual_escalation" and g.route == "adjustment_review" and case.created is True

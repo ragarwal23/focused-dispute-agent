@@ -175,6 +175,7 @@ def run_eval(
             "note_driven": s.note_driven, "category_pred": inv.category, "category_expected": s.expected_category,
             "route_expected": s.expected_route, "account_attempts": inv.account_attempts,
             "policy_attempts": inv.policy_attempts, "case": inv.case.model_dump(),
+            "review": inv.review.model_dump(), "followups": inv.followups,
             "checks": checks,
             "findings": findings.model_dump() if findings else None,
             "derived": derived_json(inv.derived),

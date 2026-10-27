@@ -1,7 +1,8 @@
 # Payment Dispute Review Agent — Project Brief
 
-**Version 0.8 | October 26, 2026 | Timebox: 3 days**
+**Version 0.9 | October 26, 2026 | Timebox: 3 days**
 
+*v0.9: matches [architecture.md](architecture.md) v0.7. The human decision moves inside the graph: after the gate the run pauses for the rep, who approves, overrides the route with a reason, or answers the open questions once on `need_more_evidence`. A checkpointer saves the state so the run resumes later. The eval approves every pause.*
 *v0.8: matches [architecture.md](architecture.md) v0.6. Back to the v0.4 shape: the two agents run in parallel under the LangGraph orchestrator and meet at a sync join, which may send each agent back once (clarify when the Account Agent returned nothing, re-retrieve when a different policy set was in force on the disputed event's date). The Policy Agent's first read is on the complaint date. The gate, sync and synthesize keep their v0.7 behaviour; `create_review_case` is built.*
 *v0.7: matches [architecture.md](architecture.md) v0.5. The agents run in sequence, Account then Policy, because policy retrieval needs the disputed event's date. LangGraph code, not the LLM, owns the run, and there are no retries or re-requests. The gate enforces policy with Python checks we wrote for P1–P7; the LLM's reading of the policy is advisory. Unclear policy escalates; unclear or missing facts go to `need_more_evidence`. The route is the only action. Data sizes updated to what was built.*
 *v0.6: decisions D1–D6 closed (see [architecture.md](architecture.md)). Policy retrieval is a code filter by category and effective date, with vector search deferred; payment and refund states are derived by code; a gate rejection keeps the draft and adds `gate_rejected`.*
@@ -104,12 +105,14 @@ rep message + account_id
         |
    [Gate]                       plain Python, no LLM. Our checks for P1–P7 run against the
         |                       account's events; IDs, dates, allowed routes, duplicates
-   [create_review_case]         one simulated write, idempotent
+   [review]                     the graph pauses: the rep approves, overrides the route with a
+        |                       reason, or answers once on need_more_evidence (Account Agent again)
+   [create_review_case]         one simulated write, idempotent, under the rep's route
         |
-   drafted case to the rep      the rep decides; only the servicing backend moves money
+   case filed for the rep       only the servicing backend moves money
 ```
 
-The only second runs are sync's two re-requests, each bounded to one. A runtime-choosing orchestrator, or a second look by an agent on its own judgment, is the v2 candidate if evals show it is needed.
+The only second runs are sync's two re-requests and the rep's one follow-up answer, each bounded to one. A runtime-choosing orchestrator, or a second look by an agent on its own judgment, is the v2 candidate if evals show it is needed.
 
 **The gate enforces our rules, not the LLM's.** Each policy assumption P1–P7 is a Python check keyed by its policy section ID. Each check reads structured event fields only and returns true, false or unknown. A true result can rule out `explain_events` or `adjustment_review`; the two cautious routes are never ruled out. The LLM's structured rules feed citations and the case note, never the gate's logic.
 
@@ -123,7 +126,7 @@ When the Account Agent hits its tool budget, it returns what it has with a budge
 
 Account Agent, read only: `get_account`, `list_events`, `get_event`, `find_events_by_reference`, `list_review_cases`.
 Policy Agent, read only: `search_policy`.
-Graph, write: `create_review_case`. Simulated, idempotent, the only action the agent can take. Called by the graph after the gate, never chosen by an LLM.
+Graph, write: `create_review_case`. Simulated, idempotent, the only action the agent can take. Called by the graph after the rep's review, never chosen by an LLM.
 
 ### Models
 

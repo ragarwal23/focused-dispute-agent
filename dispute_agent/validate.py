@@ -9,7 +9,9 @@ from typing import Any
 
 from .evaluate import CHECKS
 
-NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "gate", "create_review_case"]
+NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "gate", "review"]  # a run pauses at review
+RESUME_HEAD = ["review", "account_agent_followup", "derive_states_followup", "sync"]  # a resume where the rep answered
+RESUME_TAIL = ["synthesize", "gate", "review"]
 
 
 def expected_children(account_attempts: int, policy_attempts: int) -> list[str]:
@@ -20,6 +22,11 @@ def expected_children(account_attempts: int, policy_attempts: int) -> list[str]:
     if policy_attempts == 2:
         head += ["policy_agent_retry", "sync"]
     return head + tail
+
+
+def expected_resume_children(policy_retry: bool) -> list[str]:
+    """An answer-path resume: the Account Agent looks again, maybe a re-retrieve, then back to the pause."""
+    return RESUME_HEAD + (["policy_agent_retry", "sync"] if policy_retry else []) + RESUME_TAIL
 
 
 def stability(reports: list[dict], known: set[tuple[str, str]]) -> tuple[list[str], bool]:
@@ -96,8 +103,16 @@ def trace_check(client: Any, project: str, last: int = 1, wait: float = 30.0) ->
             lines.append(f"{_value(root, 'name')}: no outputs")
             ok = False
             continue
-        expected = expected_children(int(outputs["account_attempts"]), int(outputs["policy_attempts"]))
-        match = _children_match(actual, expected)
+        if str(_value(root, "name")).endswith(" resume"):  # approve/override resumes have no tokens and never get here
+            if not outputs.get("followups"):  # continued a crashed run: its shape depends on where it crashed
+                lines.append(f"{_value(root, 'name')}: recovery resume, shape not checked")
+                continue
+            options = [expected_resume_children(False), expected_resume_children(True)]
+            match = actual in options
+            expected = options[0]
+        else:
+            expected = expected_children(int(outputs["account_attempts"]), int(outputs["policy_attempts"]))
+            match = _children_match(actual, expected)
         duration = _value(root, "end_time") and _value(root, "start_time")
         seconds = (_value(root, "end_time") - _value(root, "start_time")).total_seconds() if duration else 0
         lines.append(

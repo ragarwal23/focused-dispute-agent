@@ -1,5 +1,6 @@
 """The eval scorer: a failed finalize, the final route vs the draft's route, confidence consistency, the matrix."""
 
+import json
 from pathlib import Path
 
 from dispute_agent.evaluate import run_eval
@@ -13,6 +14,7 @@ from dispute_agent.sync import sync
 from dispute_agent.synthesize import SynthesisResult
 from test_derive import oracle_findings
 from test_policy_agent import rule
+from test_review import graph_for, s15_agent
 from test_sync import account_state, policy_with
 
 
@@ -88,3 +90,12 @@ def test_eval_refuses_fault(ds, monkeypatch, tmp_path, capsys):
     assert run_eval(str(Path(__file__).resolve().parent.parent / "data"), "dev", None, 0.75, 0.75, 0.75) == 2
     assert "unset DISPUTE_FAULT before eval" in capsys.readouterr().out
     assert not (tmp_path / "runs").exists()
+
+
+def test_row_has_review(ds, sections, tmp_path, monkeypatch):
+    """The eval approves every pause: each row records the approval and no follow-up."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("dispute_agent.evaluate.build_graph", lambda ds_, sections_, *a, **k: graph_for(ds, sections, "S-15", s15_agent(ds)))
+    assert run_eval(str(Path(__file__).resolve().parent.parent / "data"), "dev", "S-15", 0, 0, 0) == 0
+    row = json.loads(next((tmp_path / "runs").glob("eval_*.json")).read_text())["rows"][0]
+    assert row["review"]["action"] == "approve" and row["followups"] == 0
