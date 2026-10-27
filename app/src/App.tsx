@@ -1,70 +1,99 @@
-// The page: the inbox column on the left, the thread on the right, and the one reducer that holds both.
+// The page: the inbox on the left, the conversation in the middle, the process panel on the right.
+// One reducer holds it all. A conversation is a list of turns: the rep's messages and the assistant's replies.
 import { useCallback, useEffect, useReducer, useState } from "react";
 import {
   api, resumeThread, startThread, ROUTE_LABEL,
   type Account, type Decision, type InboxItem, type Owner, type ReviewRequest, type ResultEvent, type StreamEvent, type ThreadSummary,
 } from "./api";
+import Process from "./Process";
 import Thread from "./Thread";
 
 export interface Step {
   id: string; key: string; label: string; owner: Owner; parent: string | null; detail: string | null;
   status: "running" | "done" | "stopped";
 }
-export interface ThreadState {
-  threadId: string | null; customer: string; accountId: string; channel: string; customerMessage: string;
-  steps: Step[]; pause: ReviewRequest | null; result: ResultEvent | null; error: string | null; streaming: boolean;
+export interface RepTurn { role: "rep"; text: string; kind: "message" | "answer" | "decision" }
+export interface AssistantTurn {
+  role: "assistant"; steps: Step[]; pause: ReviewRequest | null; result: ResultEvent | null; error: string | null;
+  streaming: boolean; at: string;
 }
-interface State { inbox: InboxItem[]; accounts: Account[]; paused: ThreadSummary[]; thread: ThreadState | null }
+export type Turn = RepTurn | AssistantTurn;
+export interface ThreadState {
+  threadId: string | null; accountId: string; channel: string; label: string | undefined; prefill: string;
+  turns: Turn[]; notice: string | null;
+}
+interface State { inbox: InboxItem[]; accounts: Account[]; runs: ThreadSummary[]; thread: ThreadState | null; process: number | null }
 type Action =
-  | { type: "loaded"; inbox?: InboxItem[]; accounts?: Account[]; paused?: ThreadSummary[] }
+  | { type: "loaded"; inbox?: InboxItem[]; accounts?: Account[]; runs?: ThreadSummary[] }
   | { type: "open"; thread: ThreadState }
   | { type: "threadId"; id: string }
+  | { type: "send"; text: string; kind: RepTurn["kind"] }
   | { type: "event"; event: StreamEvent }
-  | { type: "resuming" }
-  | { type: "failed"; message: string };
+  | { type: "failed"; message: string }
+  | { type: "process"; turn: number | null }
+  | { type: "dismiss" };
 
-function stopRunning(steps: Step[], keep?: (s: Step) => boolean): Step[] {
-  return steps.filter((s) => s.status !== "running" || !keep || keep(s)).map((s) => (s.status === "running" ? { ...s, status: "stopped" } : s));
-}
+const now = () => new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+const stop = (steps: Step[]) => steps.map((s) => (s.status === "running" ? { ...s, status: "stopped" as const } : s));
 
-function onEvent(t: ThreadState, e: StreamEvent): ThreadState {
+function onEvent(t: AssistantTurn, e: StreamEvent): AssistantTurn {
   switch (e.type) {
     case "step": {
       if (e.phase === "start") return { ...t, steps: [...t.steps, { ...e, status: "running" }] };
       const i = t.steps.findIndex((s) => s.id === e.id);
-      const done: Step = { ...e, status: "done", label: e.label };
+      const done: Step = { ...e, status: "done" };
       return { ...t, steps: i < 0 ? [...t.steps, done] : t.steps.map((s, j) => (j === i ? done : s)) };
     }
-    case "pause": // the pause card stands in for the "waiting for your decision" line
-      return { ...t, threadId: e.thread_id, pause: e.request, streaming: false, steps: stopRunning(t.steps, (s) => s.key !== "review") };
+    case "pause":
+      return { ...t, pause: e.request, streaming: false, steps: t.steps.filter((s) => s.key !== "review" || s.status === "done") };
     case "result":
-      return { ...t, result: e, pause: null, streaming: false };
+      return { ...t, result: e, streaming: false };
     case "error":
-      return { ...t, error: e.message, pause: null, streaming: false, steps: stopRunning(t.steps) };
+      return { ...t, error: e.message, streaming: false, steps: stop(t.steps) };
   }
+}
+
+function withLast(t: ThreadState, f: (a: AssistantTurn) => AssistantTurn): ThreadState {
+  const i = t.turns.length - 1, last = t.turns[i];
+  return last?.role === "assistant" ? { ...t, turns: [...t.turns.slice(0, i), f(last)] } : t;
 }
 
 function reducer(state: State, a: Action): State {
   const t = state.thread;
   switch (a.type) {
     case "loaded":
-      return { ...state, ...(a.inbox && { inbox: a.inbox }), ...(a.accounts && { accounts: a.accounts }), ...(a.paused && { paused: a.paused }) };
+      return { ...state, ...(a.inbox && { inbox: a.inbox }), ...(a.accounts && { accounts: a.accounts }), ...(a.runs && { runs: a.runs }) };
     case "open":
-      return { ...state, thread: a.thread };
+      return { ...state, thread: a.thread, process: null };
     case "threadId":
       return t ? { ...state, thread: { ...t, threadId: a.id } } : state;
+    case "send": {
+      if (!t) return state;
+      const reply: AssistantTurn = { role: "assistant", steps: [], pause: null, result: null, error: null, streaming: true, at: now() };
+      const turns = [...t.turns, { role: "rep", text: a.text, kind: a.kind } as RepTurn, reply];
+      return { ...state, thread: { ...t, turns, notice: null, prefill: "" }, process: turns.length - 1 };  // prefill is spent once sent
+    }
     case "event":
-      return t ? { ...state, thread: onEvent(t, a.event) } : state;
-    case "resuming":
-      return t ? { ...state, thread: { ...t, error: null, streaming: true } } : state;  // the pause stays until the server answers
-    case "failed": // an HTTP refusal (404/409/422): nothing ran, so the pause stays as it was
-      return t ? { ...state, thread: { ...t, error: a.message, streaming: false } } : state;
+      return t ? { ...state, thread: withLast(t, (last) => onEvent(last, a.event)) } : state;
+    case "failed": { // an HTTP refusal: nothing ran, so take the turn back and say why
+      if (!t) return state;
+      const last = t.turns[t.turns.length - 1];
+      if (last?.role === "assistant" && last.steps.length === 0)
+        return { ...state, thread: { ...t, turns: t.turns.slice(0, -2), notice: a.message }, process: null };
+      return { ...state, thread: withLast(t, (l) => ({ ...l, error: a.message, streaming: false, steps: stop(l.steps) })) };
+    }
+    case "process":
+      return { ...state, process: a.turn };
+    case "dismiss":
+      return t ? { ...state, thread: { ...t, notice: null } } : state;
   }
 }
 
-const fresh = (customer: string, accountId: string, channel: string, message: string): ThreadState => ({
-  threadId: null, customer, accountId, channel, customerMessage: message, steps: [], pause: null, result: null, error: null, streaming: true,
-});
+/** The pause the rep can still act on: the latest assistant turn, when it is waiting. */
+export function activePause(t: ThreadState): ReviewRequest | null {
+  const last = t.turns[t.turns.length - 1];
+  return last?.role === "assistant" && !last.streaming && !last.error ? last.pause : null;
+}
 
 function age(iso: string | null): string {
   if (!iso) return "";
@@ -73,136 +102,125 @@ function age(iso: string | null): string {
 }
 
 export default function App() {
-  const [state, dispatch] = useReducer(reducer, { inbox: [], accounts: [], paused: [], thread: null });
-  const [calling, setCalling] = useState(false);
-  const [callAccount, setCallAccount] = useState("");
-  const [callNotes, setCallNotes] = useState("");
+  const [state, dispatch] = useReducer(reducer, { inbox: [], accounts: [], runs: [], thread: null, process: null });
+  const [picking, setPicking] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const busy = state.thread?.streaming ?? false;
-  const customerOf = (id: string | null) => state.accounts.find((a) => a.account_id === id)?.customer ?? id ?? "";
+  const t = state.thread;
+  const busy = t?.turns[t.turns.length - 1]?.role === "assistant" && (t.turns[t.turns.length - 1] as AssistantTurn).streaming;
 
-  const refreshThreads = useCallback(() => {
-    api.threads().then((paused) => dispatch({ type: "loaded", paused })).catch(() => undefined);
+  const refreshRuns = useCallback(() => {
+    api.threads().then((runs) => dispatch({ type: "loaded", runs })).catch(() => undefined);
   }, []);
   useEffect(() => {
     Promise.all([api.inbox(), api.accounts()])
       .then(([inbox, accounts]) => dispatch({ type: "loaded", inbox, accounts }))
       .catch((e: Error) => setLoadError(`Cannot reach the server: ${e.message}. Is \`python -m app.server\` running?`));
-    refreshThreads();
-  }, [refreshThreads]);
+    refreshRuns();
+  }, [refreshRuns]);
 
-  const run = (promise: Promise<void>) =>
-    promise.catch((e: Error) => dispatch({ type: "failed", message: e.message })).finally(refreshThreads);
+  const run = (p: Promise<void>) => p.catch((e: Error) => dispatch({ type: "failed", message: e.message })).finally(refreshRuns);
   const ev = (event: StreamEvent) => dispatch({ type: "event", event });
+  const openWith = (accountId: string, channel: string, prefill: string, label?: string) =>
+    dispatch({ type: "open", thread: { threadId: null, accountId, channel, label, prefill, turns: [], notice: null } });
 
-  function open(item: InboxItem) {
-    dispatch({ type: "open", thread: fresh(item.customer, item.account_id, item.channel, item.message) });
-    run(startThread(item.account_id, item.message, item.scenario_id, (id) => dispatch({ type: "threadId", id }), ev));
+  function send(text: string) {
+    if (!t) return;
+    const pause = activePause(t);
+    if (pause?.can_answer && t.threadId) {
+      dispatch({ type: "send", text, kind: "answer" });
+      run(resumeThread(t.threadId, { action: "answer", answer: text }, ev));
+    } else if (!t.threadId) {
+      dispatch({ type: "send", text, kind: "message" });
+      run(startThread(t.accountId, text, t.label, (id) => dispatch({ type: "threadId", id }), ev));
+    }
   }
-  function logCall() {
-    const account = state.accounts.find((a) => a.account_id === callAccount);
-    if (!account || !callNotes.trim()) return;
-    dispatch({ type: "open", thread: fresh(account.customer, account.account_id, "Phone call (logged by you)", callNotes.trim()) });
-    run(startThread(account.account_id, callNotes.trim(), undefined, (id) => dispatch({ type: "threadId", id }), ev));
-    setCalling(false);
-    setCallNotes("");
-  }
-  function decide(decision: Decision) {
-    const id = state.thread?.threadId;
-    if (!id) return;
-    dispatch({ type: "resuming" });
-    run(resumeThread(id, decision, ev));
+  function decide(d: Decision) {
+    if (!t?.threadId) return;
+    const text = d.action === "approve" ? "Approved. File it under the recommended route." : d.action === "override"
+      ? `Override: file it under ${ROUTE_LABEL[d.route]}. ${d.reason}` : "Continue from the last checkpoint.";
+    dispatch({ type: "send", text, kind: "decision" });
+    run(resumeThread(t.threadId, d, ev));
   }
   async function reopen(s: ThreadSummary) {
     try {
       const d = await api.thread(s.thread_id);
-      dispatch({ type: "open", thread: {
-        ...fresh(customerOf(d.account_id), d.account_id ?? "", "Reopened from paused runs", d.message ?? ""),
-        threadId: d.thread_id, streaming: false, pause: d.request, result: d.result,
-        error: d.status === "stopped" ? `This run stopped at ${d.stopped_at.join(", ")} before reaching review.` : null,
-      } });
+      const reply: AssistantTurn = { role: "assistant", steps: [], pause: d.request, result: d.result, streaming: false, at: "",
+        error: d.status === "stopped" ? `This run stopped at ${d.stopped_at.join(", ")} before reaching a decision.` : null };
+      dispatch({ type: "open", thread: { threadId: d.thread_id, accountId: d.account_id ?? "", channel: "Reopened", label: d.label,
+        prefill: "", notice: null, turns: [{ role: "rep", text: d.message ?? "", kind: "message" }, reply] } });
     } catch (e) {
       setLoadError((e as Error).message);
     }
   }
 
+  const processTurn = t && state.process !== null ? t.turns[state.process] : null;
   return (
-    <div className="desk">
+    <div className={`desk ${processTurn?.role === "assistant" ? "with-process" : ""}`}>
       <aside className="inbox">
         <header className="brand">
           <span className="brand-mark">AMF</span>
           <div><h1>Dispute desk</h1><p>Agarwal Motor Finance · servicing</p></div>
         </header>
         {loadError && <p className="notice">{loadError}</p>}
-
         <section>
           <h2>Inbox <span className="count">{state.inbox.length}</span></h2>
           <ul className="queue">
             {state.inbox.map((item, i) => (
               <li key={item.scenario_id} style={{ animationDelay: `${i * 30}ms` }}>
-                <button disabled={busy} onClick={() => open(item)}
-                  className={state.thread?.customerMessage === item.message ? "active" : ""}>
-                  <span className="row-top"><strong>{item.customer}</strong><code>{item.account_id}</code></span>
-                  <span className="channel">{item.channel}</span>
+                <button disabled={busy} onClick={() => openWith(item.account_id, item.channel, item.message, item.scenario_id)}
+                  className={t?.label === item.scenario_id ? "active" : ""}>
+                  <span className="row-top"><code className="acct">{item.account_id}</code><span className="channel">{item.channel}</span></span>
                   <span className="snippet">{item.message}</span>
                 </button>
               </li>
             ))}
           </ul>
         </section>
-
         <section className="call">
-          {!calling ? (
-            <button className="ghost" disabled={busy} onClick={() => setCalling(true)}>+ Log a phone call</button>
+          {!picking ? (
+            <button className="ghost" disabled={busy} onClick={() => setPicking(true)}>+ New conversation</button>
           ) : (
-            <div className="call-form">
-              <label>Account
-                <select value={callAccount} onChange={(e) => setCallAccount(e.target.value)}>
-                  <option value="">Choose the caller's account</option>
-                  {state.accounts.map((a) => <option key={a.account_id} value={a.account_id}>{a.account_id} · {a.customer}</option>)}
-                </select>
-              </label>
-              <label>Call notes
-                <textarea rows={4} value={callNotes} onChange={(e) => setCallNotes(e.target.value)}
-                  placeholder="What the customer said, in your words" />
-              </label>
-              <div className="row">
-                <button className="primary" disabled={busy || !callAccount || !callNotes.trim()} onClick={logCall}>Start investigation</button>
-                <button className="ghost" onClick={() => setCalling(false)}>Cancel</button>
-              </div>
-            </div>
+            <label>Which account is calling?
+              <select autoFocus defaultValue="" onChange={(e) => { if (e.target.value) { openWith(e.target.value, "Phone call", ""); setPicking(false); } }}>
+                <option value="">Choose an account</option>
+                {state.accounts.map((a) => <option key={a.account_id} value={a.account_id}>{a.account_id}</option>)}
+              </select>
+            </label>
           )}
         </section>
-
         <section>
-          <h2>Paused runs <span className="count">{state.paused.filter((p) => p.status !== "finished").length}</span></h2>
+          <h2>Recent runs <span className="count">{state.runs.filter((r) => r.status !== "finished").length} open</span></h2>
           <ul className="runs">
-            {state.paused.map((p) => (
-              <li key={p.thread_id}>
-                <button disabled={busy} onClick={() => reopen(p)} className={state.thread?.threadId === p.thread_id ? "active" : ""}>
-                  <span className="row-top"><code>{p.thread_id}</code></span>
+            {state.runs.map((r) => (
+              <li key={r.thread_id}>
+                <button disabled={busy} onClick={() => reopen(r)} className={t?.threadId === r.thread_id ? "active" : ""}>
+                  <span className="row-top"><code className="acct">{r.account_id}</code><span className="muted">{age(r.updated_at)}</span></span>
                   <span className="run-meta">
-                    <span className={`status ${p.status}`}>{p.status === "stopped" ? `stopped at ${p.stopped_at[0]}` : p.status}</span>
-                    {p.route && <span>{ROUTE_LABEL[p.route]}</span>}
-                    <span className="muted">{age(p.updated_at)}</span>
+                    <span className={`status ${r.status}`}>{r.status === "stopped" ? `stopped at ${r.stopped_at[0]}` : r.status}</span>
+                    {r.route && <span>{ROUTE_LABEL[r.route]}</span>}
                   </span>
                 </button>
               </li>
             ))}
-            {state.paused.length === 0 && <li className="muted empty">No runs yet.</li>}
+            {state.runs.length === 0 && <li className="muted empty">No runs yet.</li>}
           </ul>
         </section>
       </aside>
 
       <main className="pane">
-        {state.thread ? <Thread thread={state.thread} onDecide={decide} /> : (
+        {t ? (
+          <Thread key={`${t.accountId}-${t.label ?? ""}-${t.threadId ?? "new"}`} thread={t} onSend={send} onDecide={decide}
+            onOpenProcess={(i) => dispatch({ type: "process", turn: i })} onDismiss={() => dispatch({ type: "dismiss" })} />
+        ) : (
           <div className="blank">
             <h2>Pick a complaint from the inbox</h2>
-            <p>The assistant reads the account and the policy, cross-checks them, and drafts a review case.
-              Every step is marked <b className="badge ai">AI</b> or <b className="badge code">code</b>, and nothing is filed until <b className="badge you">you</b> decide.</p>
+            <p>Send it to the assistant as you would describe it to a colleague. It reads the account and the policy,
+              cross-checks them, and recommends a route. Nothing is filed until you decide.</p>
           </div>
         )}
       </main>
+
+      {processTurn?.role === "assistant" && <Process turn={processTurn} onClose={() => dispatch({ type: "process", turn: null })} />}
     </div>
   );
 }

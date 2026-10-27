@@ -84,9 +84,12 @@ python -m app.server                  # API on 127.0.0.1:8000 (--port to change)
 cd app && npm ci && npm run dev       # the page on http://localhost:5173 (API_PORT=... if the API is not on 8000)
 ```
 
-The inbox holds the 12 dev complaints (never the held-out four, never the answer key). Click one and watch each step
-as it runs, then approve, override, or answer at the pause. "Log a phone call" starts a new complaint on any account.
-Runs share `runs/checkpoints.sqlite` with the CLI, so a thread paused in the page can be resumed with `resume`.
+The inbox holds the 12 dev complaints (never the held-out four, never the answer key), shown by account number.
+Opening one puts the complaint in the composer as the rep's message; the rep edits it and sends, and the assistant
+replies in the conversation: a phase bar while it works, then the recommended route, the case note, its sources and
+the Approve / Override buttons. Open questions are answered in the composer. "View process" opens a side panel with
+every step, badged AI, code or you. "New conversation" starts a complaint on any account. Runs share
+`runs/checkpoints.sqlite` with the CLI, so a thread paused in the page can be resumed with `resume`.
 
 Every `ask` pauses at the `review` node; its state is saved in `runs/checkpoints.sqlite`, so `resume` can continue it
 later in a new process. `eval` never pauses: it approves every run, so its scores measure the agents and the gate.
