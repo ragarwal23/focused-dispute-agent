@@ -127,7 +127,27 @@ def check(ds: Dataset, path: Path = GOLDEN_XLSX) -> list[str]:
         for name, want in built[sid].items():
             if stored[sid][name] != want:
                 diffs.append(f"{sid}.{name}: workbook {stored[sid][name]!r}, scenarios.xlsx {want!r}")
-    return diffs
+    return diffs + _index_diffs(ds, path)
+
+
+def _index_diffs(ds: Dataset, path: Path) -> list[str]:
+    """The Cases index repeats some sheet fields for reading; a hand edit there must fail --check too."""
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        rows = wb[INDEX_SHEET].iter_rows(values_only=True)
+        header = [str(h) for h in next(rows)]
+        diffs = []
+        for raw in rows:
+            row = dict(zip(header, raw))
+            s = ds.scenarios.get(row.get("scenario_id"))
+            if s is None:
+                break
+            for name in INDEX_COLS[2:]:
+                if row.get(name) != cell(getattr(s, name)):
+                    diffs.append(f"Cases {s.scenario_id}.{name}: workbook {row.get(name)!r}, scenarios.xlsx {cell(getattr(s, name))!r}")
+        return diffs
+    finally:
+        wb.close()
 
 
 def main(argv: list[str] | None = None) -> int:

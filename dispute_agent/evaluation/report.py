@@ -68,7 +68,7 @@ def actual_fields(case: Case, row: dict[str, Any]) -> dict[str, Any]:
         "existing_case_id / case_id": f"{filed['case_id']} ({'created' if filed.get('created') else 'existing'})" if filed else None,
         "policy_ids / policy_source_ids": cell(draft["policy_source_ids"]) if draft else NO_DRAFT,
         "confidence": draft["confidence"] if draft else None,
-        "open_questions": "\n".join(draft.get("open_questions") or []) or None if draft else None,
+        "open_questions": ("\n".join(draft.get("open_questions") or []) or None) if draft else None,
         "rationale / case_note": draft["case_note"] if draft else NO_DRAFT,
     }
 

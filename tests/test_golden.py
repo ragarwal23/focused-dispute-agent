@@ -58,6 +58,15 @@ def test_check_detects_drift(ds, tmp_path):
     assert check(ds, tmp_path / "missing.xlsx") == [f"{tmp_path / 'missing.xlsx'} is missing; run --build"]
 
 
+def test_check_detects_index_drift(ds, tmp_path):
+    path = tmp_path / "golden.xlsx"
+    write_golden(build_cases(ds), path)
+    wb = openpyxl.load_workbook(path)
+    wb["Cases"]["I2"].value = "adjustment_review"  # S-01's expected_route in the index only
+    wb.save(path)
+    assert check(ds, path) == ["Cases S-01.expected_route: workbook 'adjustment_review', scenarios.xlsx 'explain_events'"]
+
+
 def test_split_all_selects_sixteen(ds):
     assert len(select_scenarios(ds, "all", None)) == 16
     assert [s.scenario_id for s in select_scenarios(ds, "dev", None)] == [
