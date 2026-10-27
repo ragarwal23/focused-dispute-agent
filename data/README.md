@@ -1,8 +1,8 @@
 # Synthetic data: Agarwal Motor Finance
 
-Built to [`docs/data_contract.md`](../docs/data_contract.md) **v1.1**. Everything is fictional. Agarwal Motor Finance is a made-up lender that services loans on Mercedes-Benz, GM (Chevrolet, GMC, Cadillac, Buick) and Ford/Lincoln vehicles.
+Everything is fictional. Agarwal Motor Finance is a made-up lender that services auto loans. Every column is defined in the [data contract](../docs/data_contract.md); the policy documents are in [`policies/`](policies/).
 
-**TL;DR:** 17 accounts, 159 events (Jun to Oct 2026, roughly 5 months of routine history per account), 3 existing review cases and 16 scenarios. Every contract rule (1–18) passes. `stale_policy` is held back until the policy step.
+**TL;DR:** 17 accounts, 159 events (Jun to Oct 2026, about five months of history per account), 3 existing review cases and 16 scenarios. The superseded-policy trap lives in the policy documents, not in a scenario.
 
 ## Files
 
@@ -43,11 +43,11 @@ Built to [`docs/data_contract.md`](../docs/data_contract.md) **v1.1**. Everythin
 | `expected_payment_state` | State of **the payment in question**: `returned` / `reversed` if a return or reversal links to it; `posted` if it posted cleanly; `pending` if it was scheduled or attempted but never posted (S-04, S-05); `not_found` if the customer claims a payment that isn't on this account; `not_applicable` for refund complaints that don't dispute a payment |
 | `expected_disputed_event_id` | For late fee disputes, the `fee_assessed`. Blank when the event can't be found (S-06, S-07, S-16) or the customer's reference is ambiguous (S-15) |
 | `expected_required_event_ids` | The minimum evidence a correct case note must cite. Routine history is never required |
-| Route on conflict | Any contradiction between a note and the records, or between a note and the customer, goes to `manual_escalation` (brief §3) |
+| Route on conflict | Any contradiction between a note and the records, or between a note and the customer, goes to `manual_escalation` |
 
 ## Policy assumptions the labels rely on
 
-The policy step **must** write policy that agrees with these, or the late-fee and refund labels flip.
+The [policy documents](policies/) are written to agree with these, and the eval's P1–P7 checks encode them in code. Change one and the late-fee and refund labels flip.
 
 | # | Assumption | Scenarios it decides |
 |---|---|---|

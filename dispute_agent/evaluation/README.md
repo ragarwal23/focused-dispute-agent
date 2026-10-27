@@ -1,6 +1,6 @@
 # Evaluation: golden workbook, metrics, judge, release workbook
 
-Three stages, the way the Aurelius evals run: **`eval`** captures a run of every scenario into a JSON, **`judge`** scores
+Three stages: **`eval`** captures a run of every scenario into a JSON, **`judge`** scores
 each case note with a second model into a sidecar JSON, **`report`** renders both next to the golden answers as one
 release workbook. The same axes score every scenario; only the golden values differ. Before any model is graded the
 scorer is proven on the key itself (`eval --producer golden_echo`, 16/16 PASS) and on an empty answer (`empty_stub`,
@@ -84,7 +84,7 @@ cautious routes are never ruled out. They are used twice, both in the eval, neve
 
 The checks cannot read notes, so a wrong route decided by a note alone (S-03, S-10, S-14) passes them. Until v0.8 they also ran
 at runtime, where they could force `manual_escalation`; in 279 scored eval rows that never changed a route, so the
-runtime step was removed (`docs/architecture.md`, D10).
+runtime step was removed (see [architecture.md](../../docs/architecture.md)).
 
 **Qualitative, LLM-judged** in `judge.py`. Claude Opus 5.5 grades what Claude Sonnet 5.5 wrote, 0-3 per axis, one
 structured call per scenario (`JudgeScores`; a quoted span is required for any score below 3, so a reason can be checked):

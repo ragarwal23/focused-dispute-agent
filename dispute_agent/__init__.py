@@ -1,4 +1,4 @@
-"""The payment-dispute review agent. Each folder is one box of docs/diagrams/architecture_v0.8.png, in run order:
+"""The payment-dispute review agent. Each folder is one box of docs/diagrams/architecture.png, in run order:
 
     orchestrator/    2. the LangGraph graph: classify, fan out, join, pause, file. Start reading at graph.py
     account_agent/   3a. the Account Agent: an LLM with read-only tools, then code that checks its answer

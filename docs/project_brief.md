@@ -1,20 +1,10 @@
 # Payment Dispute Review Agent — Project Brief
 
-**Version 0.10 | October 27, 2026 | Timebox: 3 days**
+An internal agent that reads a customer's payment complaint, checks the account records, prior rep notes and servicing policy, then drafts a review case for a human rep with the evidence attached and a recommended review queue. It never touches money.
 
-*v0.10: matches [architecture.md](architecture.md) v0.8. No runtime gate: the recommended route is the draft's, or `manual_escalation` when no draft could be written, and the draft can cite only the IDs it was shown. Our P1–P7 checks move to the eval, where they score every route (`policy_consistent`) and audit the golden labels. The `gate_rejected` output field is gone.*
-*v0.9: matches [architecture.md](architecture.md) v0.7. The human decision moves inside the graph: after the gate the run pauses for the rep, who approves, overrides the route with a reason, or answers the open questions once on `need_more_evidence`. A checkpointer saves the state so the run resumes later. The eval approves every pause.*
-*v0.8: matches [architecture.md](architecture.md) v0.6. Back to the v0.4 shape: the two agents run in parallel under the LangGraph orchestrator and meet at a sync join, which may send each agent back once (clarify when the Account Agent returned nothing, re-retrieve when a different policy set was in force on the disputed event's date). The Policy Agent's first read is on the complaint date. The gate, sync and synthesize keep their v0.7 behaviour; `create_review_case` is built.*
-*v0.7: matches [architecture.md](architecture.md) v0.5. The agents run in sequence, Account then Policy, because policy retrieval needs the disputed event's date. LangGraph code, not the LLM, owns the run, and there are no retries or re-requests. The gate enforces policy with Python checks we wrote for P1–P7; the LLM's reading of the policy is advisory. Unclear policy escalates; unclear or missing facts go to `need_more_evidence`. The route is the only action. Data sizes updated to what was built.*
-*v0.6: decisions D1–D6 closed (see [architecture.md](architecture.md)). Policy retrieval is a code filter by category and effective date, with vector search deferred; payment and refund states are derived by code; a gate rejection keeps the draft and adds `gate_rejected`.*
-*v0.5: section 4 restated as an orchestrator with two specialist agents and a deterministic gate, delegation order fixed. Same steps as v0.4, named by owner. Policy retrieval no longer specified as vector search. Full detail in [architecture.md](architecture.md).*
-**Rule for every decision in this document: simplest thing that still tells a good evaluation story.**
+**Design rule:** the simplest system that still supports a good evaluation story.
 
-## 1. The one-sentence pitch
-
-An internal agent that reads a customer's payment complaint, checks the account records, prior rep notes, and servicing policy, then drafts a review case for a human rep with the evidence attached and a recommended review queue. It never touches money.
-
-## 2. The problem
+## 1. The problem
 
 A servicing rep at an auto lender gets complaints like:
 
@@ -23,23 +13,21 @@ A servicing rep at an auto lender gets complaints like:
 - "Why was my payment reversed?"
 - "Someone on the phone promised me a refund and it never came."
 
-Today the rep reads the complaint, digs through account history, rereads notes from earlier calls, checks policy, and writes up a case by hand. The agent does the digging and drafts the write-up. The rep stays in charge of the decision.
+Today the rep reads the complaint, digs through account history, rereads notes from earlier calls, checks policy and writes up a case by hand. The agent does the digging and drafts the write-up. The rep still makes the decision.
 
 ### Why an LLM, and where it stops
 
-This is a hybrid system on purpose. **Language goes to the LLM. Rules go to code.**
+**Language goes to the LLM. Rules and control flow go to code.**
 
 | The LLM handles | Code handles |
 |---|---|
-| Interpreting vague or messy complaints | Date, amount, and grace-period math |
-| Matching "the payment from Tuesday" to one specific event | Following links between events |
-| Reading free-text notes from earlier rep calls | Checking every cited record belongs to this account |
-| Reading policy written in prose, and flagging where it's unclear | Enforcing policy rules P1–P7 as checks we wrote, not the LLM |
-| Drafting the case note | Allowed routes, duplicate cases, and rejecting any output that fails these checks |
+| Interpreting vague or messy complaints | What runs next, the parallel fan-out, the bounded re-runs and failure handling |
+| Matching "the payment from Tuesday" to one specific event | Confirming that event is on this account, and deriving payment and refund state from its chain |
+| Reading free-text notes from earlier rep calls | Filtering policy by dispute category and effective date |
+| Reading policy written in prose, and flagging where it's unclear | Limiting citations to the event and section IDs the model was shown |
+| Choosing the route and drafting the case note | Duplicate cases and the one write; scoring every route against policy rules P1–P7 in the eval |
 
-The claim that the LLM adds value is tested, not assumed: a code-only baseline runs on the same scenarios (section 6).
-
-## 3. What the agent produces
+## 2. What the agent produces
 
 One drafted review case per dispute:
 
@@ -49,18 +37,18 @@ One drafted review case per dispute:
 | `review_route` | Which human queue it goes to (table below) |
 | `event_ids` | The account records, including rep notes, that support the recommendation |
 | `policy_source_ids` | The policy sections that support it |
-| `facts` | A few typed facts the code can check: payment state, disputed event, whether the policy timeline was met |
-| `confidence` | `high`, `medium`, or `low` |
+| `facts` | Typed facts code can check: disputed event, payment state, refund state |
+| `confidence` | `high`, `medium` or `low` |
 | `open_questions` | What is still unknown, if anything |
 | `case_note` | Three to five plain sentences the rep can edit and file |
-| `case_id` | The simulated review case that was created, or the existing one if a duplicate |
+| `case_id` | The simulated review case that was created, or the existing one if it is a duplicate |
 
 ### The four routes
 
 | `review_route` | When |
 |---|---|
-| `adjustment_review` | Records suggest the customer may be right; a human with authority should look at a correction |
-| `explain_events` | Records and policy clearly explain what happened; rep can walk the customer through it |
+| `adjustment_review` | Records suggest the customer may be right; someone with authority should look at a correction |
+| `explain_events` | Records and policy clearly explain what happened; the rep can walk the customer through it |
 | `need_more_evidence` | Something critical is missing, usually from the customer, or the complaint could mean more than one record |
 | `manual_escalation` | Records conflict, notes contradict records or the customer, evidence points at the wrong account, policy is unclear, or no draft could be written |
 
@@ -68,152 +56,90 @@ One drafted review case per dispute:
 
 `late_fee_autopay`, `missing_payment`, `returned_reversed_payment`, `refund_status`
 
-Category and route are independent. A reversal complaint can land on any route depending on what the records say. The agent reasons from evidence, not keywords.
+Category and route are independent: a reversal complaint can land on any route, depending on what the records say. The route is the only thing the agent proposes. There is no separate action field.
 
-The route is the only thing the agent proposes. It picks which human queue gets the case; there is no separate action field.
+## 3. How it works
 
-## 4. How it works
+One LangGraph graph. Code decides what runs next; the LLM is called to classify, to run the two agents and to draft. The diagram and every step are in [architecture.md](architecture.md).
 
-One LangGraph graph: an **orchestrator** that fans out to two **specialist agents** in parallel, a **sync** join that cross-checks their findings, then one LLM call that drafts the case. The orchestrator is code: LangGraph decides what runs next, and the LLM is called only to classify and to synthesize. Both agents run after classify, at the same time; sync can send each one back once. Nothing chooses at runtime which agents to call.
+1. **Classify.** One LLM call picks the category.
+2. **Investigate, in parallel.** The **Account Agent** (LLM + five read-only tools, at most six calls) finds the disputed event, or every candidate if the complaint doesn't say which. Code then confirms the event is on this account and derives its state. The **Policy Agent** filters policy sections by category and date, ranks them with BM25, and one LLM call turns them into structured rules with citations.
+3. **Sync.** A code join checks that the two sets of findings line up. It can send each agent back once: the Account Agent if it returned nothing, the Policy Agent if a different policy set was in force on the disputed event's date.
+4. **Synthesize.** One LLM call writes the draft: route, citations, facts, confidence, open questions and case note. Its output schema accepts only the IDs it was shown. If no draft comes back, the route falls back to `manual_escalation`.
+5. **Review.** The graph pauses for the rep, who approves, overrides the route with a reason, or answers the open questions once on `need_more_evidence`. A checkpointer saves state, so the run can resume later in a new process.
+6. **Create review case.** One simulated, idempotent write under the final route. Only the servicing backend moves money, and the agent has no access to it.
 
-```text
-rep message + account_id
-        |
-   [Orchestrator]               LangGraph graph. Owns the run: fan-out, typed state, failures.
-     1. classify                one LLM call: pick the category
-        |
-        +---------------------------+
-        |                           |
-   [Account Agent]             [Policy Agent]
-   LLM + read-only account     code filters policy sections by category and the
-   tools, max 6 calls.         complaint date (no embeddings in v1), then one LLM
-   Proposes the disputed       call turns them into structured rules with
-   event, or all candidates    citations. Advisory only
-        |                           |
-     code: confirms the event       |
-     is on this account, derives    |
-     payment and refund state,      |
-     sets policy_date + fact flags  |
-        |                           |
-        +---------------------------+
-        |
-     2. sync                    code join: both findings present; the policy set read is the
-        |  ⟲ clarify            one in force on policy_date; cited dates line up. Two bounded
-        |  ⟲ re-retrieve        re-requests, each at most once: Account Agent again if it
-        |                       returned nothing; Policy Agent again on policy_date if the set differs
-     3. synthesize              one LLM call: pick route, cite evidence, write facts + case note.
-        |                       It can cite only the IDs shown; no draft -> manual_escalation
-   [review]                     the graph pauses: the rep approves, overrides the route with a
-        |                       reason, or answers once on need_more_evidence (Account Agent again)
-   [create_review_case]         one simulated write, idempotent, under the recommended or the rep's route
-        |
-   case filed for the rep       only the servicing backend moves money
-```
+Failures are recorded, not hidden. A tool error, a budget hit or an empty result is written to state, marked unknown and carried into the draft; the run continues. Unclear policy routes to `manual_escalation`; unclear or missing facts route to `need_more_evidence` with open questions.
 
-The only second runs are sync's two re-requests and the rep's one follow-up answer, each bounded to one. A runtime-choosing orchestrator, or a second look by an agent on its own judgment, is the v2 candidate if evals show it is needed.
+**Tools.** Account Agent: `get_account`, `list_events`, `get_event`, `find_events_by_reference`, `list_review_cases`. Policy Agent: `search_policy`. Graph: `create_review_case`, called by code after review, never chosen by an LLM.
 
-**P1–P7 are checked in the eval, not at runtime.** Each policy assumption P1–P7 is a Python check we wrote. Each reads structured event fields only and returns true, false or unknown; a true result rules out `explain_events` or `adjustment_review`, and the two cautious routes are never ruled out. The eval runs them on every route the agent recommends (`policy_consistent`, which needs no answer key, so it also works on live cases) and on every golden label. They do not override the agent at runtime. Until v0.8 they did, and in 279 eval runs that never changed a route: the IDs that step checked are already limited where they are made, and a human approves every case.
+**Models.** Claude Sonnet 5.5 runs the agent. Claude Opus 5.5 judges case notes in the eval, so the agent isn't graded by the model that wrote the answer.
 
-**Ambiguity is split.** If the policy text is unclear, the route is `manual_escalation`. If the facts are unclear or missing, the route is `need_more_evidence` with open questions. Both are route rules synthesize follows and the eval checks.
+## 4. Synthetic data
 
-If synthesize writes no draft (an error, or a citation of an ID it was not shown), the route falls back to `manual_escalation` and the rep still gets a case to file.
-
-When the Account Agent hits its tool budget, it returns what it has with a budget-hit flag. When a tool errors or an agent finds nothing useful, the orchestrator records the exact error, marks that finding unknown, and continues. No retries beyond sync's two re-requests.
-
-### Tools
-
-Account Agent, read only: `get_account`, `list_events`, `get_event`, `find_events_by_reference`, `list_review_cases`.
-Policy Agent, read only: `search_policy`.
-Graph, write: `create_review_case`. Simulated, idempotent, the only action the agent can take. Called by the graph after the rep's review, never chosen by an LLM.
-
-### Models
-
-Claude Sonnet 5.5 for the orchestrator's two LLM calls and both agents. No embeddings model in v1; vector search over policy is a Day 2 add-on if time allows. Claude Opus 5.5 for the LLM judge, so the agent is not graded by the exact model that produced the answer.
-
-## 5. Synthetic data
-
-Everything is fictional. The rules are written so that the right answer for every scenario follows from the records, including the notes.
+Everything is fictional, and the right answer for every scenario follows from the records, including the notes. Details in [data/README.md](../data/README.md).
 
 | Asset | Size | Purpose |
 |---|---|---|
 | Accounts | 17 | One per scenario, plus a look-alike account for the wrong-account trap |
-| Events | 159 | About five months of routine history per account, in one table. Scheduled, attempted, posted, returned, reversed, fee, refund, and **rep note** events with timestamps and links to each other |
-| Policy docs | 4 real + 2 traps | Late fees, autopay, returns, refunds. Traps: one superseded version with an old timeline, one unrelated doc about payment extensions |
-| Existing review cases | 3 | For duplicate-request tests |
-| Eval scenarios | 16 | 12 dev, 4 held out. Expand to 24 only if time remains |
+| Events | 159 | About five months of history per account: scheduled, attempted, posted, returned, reversed, fee, refund and **rep note** events, linked to each other |
+| Policy docs | 4 real + 2 traps | Late fees, autopay, returns, refunds. Traps: a superseded late-fee version and an unrelated extensions policy |
+| Existing review cases | 3 | For duplicate tests |
+| Eval scenarios | 16 | 12 dev, 4 held out |
 
-Design choices that make labels checkable and give the LLM real work:
+What makes the labels checkable and gives the LLM real work:
 
-- **Two timestamps per event.** `occurred_at` and `posted_at`. The gap is what makes late-fee and out-of-order scenarios decidable.
-- **Effective-dated policy.** Chunks have `effective_from` and `effective_to`. Retrieval must pick the version in force on the date of the disputed event.
-- **Rep notes as events.** A `rep_note` event carries free text from an earlier call, such as "Told customer refund mailed by check." Some disputes can only be resolved by reading a note and comparing it to the records or to the customer's claim.
-- **Messy complaints.** About half the scenarios use realistic wording: wrong or relative dates, partial reference numbers, bank slang, two issues in one message, emotional filler.
-- **Injection lives in tool output.** Trap instructions sit in `memo` fields returned by tools, not in the rep's message.
+- **Two timestamps per event.** `occurred_at` and `posted_at`. The gap decides the late-fee and out-of-order scenarios.
+- **Effective-dated policy.** Each section has `effective_from` and `effective_to`. Citing the superseded version is a failure even when its text looks right.
+- **Rep notes as events.** Free text from earlier calls, such as "Told customer refund mailed by check." Some disputes can only be resolved by comparing a note to the records or to the customer's claim.
+- **Messy complaints.** Half the scenarios use realistic wording: relative dates, partial reference numbers, bank slang, two issues in one message.
+- **Injection in tool output.** Trap instructions sit in `memo` fields the tools return, not in the rep's message.
 
-## 6. Evaluation
+## 5. Evaluation
+
+Full method and results: [evaluation README](../dispute_agent/evaluation/README.md) and [validation.md](validation.md).
 
 ### Dataset
 
-Four scenarios per category: three dev, one held out. Each scenario is tagged so results can be sliced:
+Four scenarios per category: three dev, one held out. Every route appears three times in dev, so always escalating can't score well. Each scenario is tagged for slicing:
 
 | Tag | Values |
 |---|---|
 | `wording` | `clean` or `messy` |
-| `note_driven` | `true` if the correct answer depends on reading a rep note; at least 3 scenarios |
-| `trap` | `none`, `missing_record`, `out_of_order`, `wrong_account`, `duplicate`, `injection`, `ambiguous`, `stale_policy` |
+| `note_driven` | `true` if the answer depends on reading a rep note (4 scenarios) |
+| `trap` | `none`, `missing_record`, `out_of_order`, `wrong_account`, `duplicate`, `injection`, `ambiguous` |
 
-Every route appears at least three times in dev so the agent cannot score well by always escalating.
+The held-out four were run once, after tuning. With four cases they are a sanity check against overfitting, not a measurement. Slices of six or fewer are directional only.
 
-Held-out cases are frozen before any prompt tuning. With four cases they are a sanity check against overfitting, not a measurement. Slices of six or fewer cases are directional only. Say both in the README.
+### Metrics
 
-### Evaluators
+**Six code-graded axes**, each PASS, PARTIAL or FAIL per scenario:
 
-| Check | How |
+| Axis | Checks |
 |---|---|
-| Category and route | Exact match, reported per category and as a route confusion matrix |
-| Cited events | Required IDs present, forbidden IDs absent |
-| Cited policy | Required source IDs present |
-| Facts block | Exact match on typed fields |
-| Confidence consistency | `need_more_evidence` or `manual_escalation` with `high` confidence is a fail |
-| Action | `create_review_case` called exactly once, or zero when a case exists; correct arguments |
-| Trajectory | Both agents ran, each at most twice (one re-request each); tool calls within budget |
-| Policy consistency | Our P1–P7 checks do not rule out the final route (`policy_consistent`); no answer key needed |
-| Case note quality | Opus judge with a rubric: grounded in cited evidence, no invented facts, clear to a rep |
+| `route` | Final route matches the label, and the draft chose it |
+| `disputed_event` | The Account Agent picked the right event, or correctly none |
+| `evidence` | Required event IDs cited, forbidden ones (another account's, a look-alike) absent |
+| `policy` | Required sections retrieved and cited, superseded or unrelated sections absent |
+| `confidence` | `high` confidence on a cautious route is a fail |
+| `guardrails` | Right category, one case created (none for a duplicate), agents within budget, and the route not ruled out by our P1–P7 policy checks |
 
-Judge calibration: hand-label every dev case note from v1 and v2 for groundedness, about 24 items, and report agreement with the judge.
+The P1–P7 checks are plain Python over structured event fields. They need no answer key, so they can also score live cases, and they audit the hand-written labels: all 16 pass.
 
-### Code-only baseline
+**Four judge axes**, Opus scores each case note 0–3: no invented facts, matches the labeler's rationale, ready to file, no leaks or promises. The judge was calibrated against 12 hand-labelled dev notes and agreed within one point on every note.
 
-A deterministic script with no LLM: keyword rules for category, most recent matching event as the disputed event, a decision table for route. It runs on the same 16 scenarios and is scored by the same deterministic evaluators.
+### Process
 
-Report baseline vs agent, sliced by `wording` and `note_driven`. The expected pattern is that the baseline holds up on clean cases and breaks on messy and note-driven ones. Report what actually happens, including any slice where the baseline wins.
+1. Run the dev set, read the traces in LangSmith, find the most common or most dangerous failure.
+2. Make one change, rerun, and compare per scenario and per axis (the release workbook's `Compare` sheet).
+3. Run the held-out set once and report the numbers as they are.
 
-### The story
+**Not built:** a code-only baseline on the same scenarios, and a judge sensitivity test on deliberately broken notes.
 
-1. Build v1. Run it on the 12 dev cases. Log to LangSmith.
-2. Read the traces. Find the most common or most dangerous failure.
-3. Make one change. Rerun. Report what improved, what regressed, by category.
-4. Run the code-only baseline on the same cases. Show where the LLM earns its cost and where it does not.
-5. Run the 4 held-out cases once. Report the numbers as they are.
+## 6. Boundaries
 
-## 7. Plan
-
-| Day | Done when |
-|---|---|
-| 1 | Data contract, fixtures for 4 seed scenarios (one note-driven), tools, orchestrator + both agents + the P1–P7 checks run end to end on all 4 |
-| 2 | 16 scenarios with tags, all evaluators, v1 run in LangSmith, failure found, v2 run |
-| 3 | Code-only baseline and comparison, held-out run, README, diagram, failure write-up, production eval plan, 5-minute recording |
-
-Cut list if behind, in order: shrink to 12 scenarios, drop judge calibration, drop the code-only baseline, drop the policy traps. Never cut the before/after comparison.
-
-## 8. Boundaries
-
-- Synthetic data only. No real customers, no real lender policy.
-- The agent recommends and drafts. A human decides. Nothing it does moves money, waives fees, or messages a customer.
-- Wrong-account evidence always escalates, and so does a run that could not write a draft.
-- Time saved per case goes in the production plan as a hypothesis to measure, not a claimed result.
-- Out of scope: UI, streaming, authentication, real integrations, training.
-
-## 9. Deliverables
-
-Repo with quickstart and Makefile, graph diagram, LangSmith links to traces and both experiment runs, before/after summary, baseline comparison, dataset and evaluator rationale, known failures, production eval plan, coding-assistant disclosure, short recording.
+- Synthetic data only. No real customers or lender policy.
+- The agent recommends and drafts; a human decides. Nothing it does moves money, waives fees or messages a customer.
+- Wrong-account evidence always escalates, and so does a run that couldn't write a draft.
+- A localhost web page for the rep, but no authentication and no real integrations.
+- Time saved per case is a hypothesis to measure in production, not a claimed result.

@@ -1,6 +1,6 @@
 # Policy documents: Agarwal Motor Finance
 
-The servicing policy the Policy Agent retrieves from. Everything is fictional. Written to agree with assumptions P1–P7 in [`../README.md`](../README.md), so every scenario label follows from the records plus this text.
+The servicing policy the Policy Agent retrieves from. Everything is fictional. Written to agree with assumptions P1–P7 in the [data README](../README.md), so every scenario label follows from the records plus this text.
 
 **TL;DR:** 4 current policies, 2 traps (a superseded late-fee version and an unrelated extensions policy), 37 sections. Each section is one retrieval chunk with its own ID. A script re-derived every late fee, return fee, refund deadline and AutoPay cancellation in `events.xlsx` from this text, and all of them match.
 
@@ -24,7 +24,7 @@ The servicing policy the Policy Agent retrieves from. Everything is fictional. W
 
 ## Wording that maps to routes
 
-The policies use business language, not route names. The mapping the synthesize prompt and evals rely on:
+The policies use business language, not route names. The mapping the agent's prompts and the eval rely on:
 
 | Policy says | Route |
 |---|---|
@@ -35,7 +35,7 @@ The policies use business language, not route names. The mapping the synthesize 
 
 ## Our P1–P7 checks (evaluation only)
 
-Five Python checks in [`dispute_agent/evaluation/policy_checks.py`](../../dispute_agent/evaluation/policy_checks.py) encode the policy assumptions P1–P7 from structured event fields. They run in the eval, never in the agent: the `policy_consistent` check asks whether P1–P7 rule out the final route, and the golden audit asks the same of every expected route (D7, D10 in `docs/architecture.md`). Citing a superseded or unrelated section (all of LF.v2.\*, all of EX.v1.\*) is scored by the eval's `policy_forbidden_clear` check.
+Five Python checks in [`policy_checks.py`](../../dispute_agent/evaluation/policy_checks.py) encode P1–P7 from structured event fields. They run in the eval, never in the agent: `policy_consistent` asks whether they rule out the final route, and the golden audit asks the same of every expected route. Citing a superseded or unrelated section (any LF.v2.\* or EX.v1.\*) is scored separately by `policy_forbidden_clear`.
 
 | Check | Policy | Encodes sections | A true result rules out |
 |---|---|---|---|
