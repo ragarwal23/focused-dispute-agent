@@ -23,6 +23,7 @@ from dispute_agent.account_agent.agent import build_account_agent
 from dispute_agent.account_agent.derive import derived_json
 from dispute_agent.data import Route, load_dataset
 from dispute_agent.evaluation.evaluate import run_eval
+from dispute_agent.evaluation.golden import read_golden
 from dispute_agent.evaluation.report import render
 from dispute_agent.evaluation.validate import stability, trace_check
 from dispute_agent.orchestrator.graph import build_graph, sqlite_checkpointer
@@ -225,7 +226,45 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
-    return render(args.json_path, args.out)
+    return render(args.json_path, args.out, judge=args.judge, before=args.before, labels=args.labels)
+
+
+def cmd_judge(args: argparse.Namespace) -> int:
+    from dispute_agent.evaluation.judge import judge_report
+    from dispute_agent.evaluation.report import load_eval
+
+    try:
+        data = load_eval(Path(args.json_path))
+    except (ValueError, json.JSONDecodeError, OSError) as exc:
+        print(f"judge: {exc}")
+        return 2
+    judge_report(Path(args.json_path), data, load_dataset(args.data), read_golden())
+    return 0
+
+
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    from dispute_agent.evaluation.judge import calibrate_check
+    from dispute_agent.evaluation.report import build_labels, load_eval
+
+    if args.build:
+        try:
+            data = load_eval(Path(args.build))
+        except (ValueError, json.JSONDecodeError, OSError) as exc:
+            print(f"calibrate: {exc}")
+            return 2
+        n = build_labels(data, read_golden(), Path(args.out))
+        print(f"wrote {args.out}: {n} dev notes to score")
+        return 0
+    if not args.labels:
+        print("calibrate: --check needs --labels")
+        return 2
+    return calibrate_check(Path(args.check), Path(args.labels))
+
+
+def cmd_langsmith_sync(args: argparse.Namespace) -> int:
+    from dispute_agent.evaluation.validate import sync_langsmith
+
+    return sync_langsmith(Path(args.json_path), Path(args.judge) if args.judge else None)
 
 
 def cmd_stability(args: argparse.Namespace) -> int:
@@ -274,6 +313,20 @@ def main(argv: list[str] | None = None) -> int:
     rep = sub.add_parser("report", help="render one eval JSON next to golden.xlsx as a release workbook")
     rep.add_argument("json_path", metavar="eval.json")
     rep.add_argument("--out", required=True, metavar="release.xlsx")
+    rep.add_argument("--judge", metavar="judge.json", help="the judge sidecar for this JSON: judge panels and judge columns")
+    rep.add_argument("--before", metavar="eval.json", help="an older eval JSON: adds the Compare sheet")
+    rep.add_argument("--labels", metavar="labels.xlsx", help="hand labels (needs --judge): adds the Calibration sheet")
+    jd = sub.add_parser("judge", help="score every case note in an eval JSON with the Opus judge (LLM)")
+    jd.add_argument("json_path", metavar="eval.json")
+    cal = sub.add_parser("calibrate", help="build the hand-label workbook, or check the judge against it")
+    cal_mode = cal.add_mutually_exclusive_group(required=True)
+    cal_mode.add_argument("--build", metavar="eval.json", help="write the labels workbook for this run's dev notes")
+    cal_mode.add_argument("--check", metavar="judge.json", help="agreement of this judge sidecar with --labels")
+    cal.add_argument("--labels", metavar="labels.xlsx", default="dispute_agent/evaluation/labels.xlsx")
+    cal.add_argument("--out", metavar="labels.xlsx", default="dispute_agent/evaluation/labels.xlsx")
+    ls = sub.add_parser("langsmith-sync", help="upload golden.xlsx as a LangSmith dataset and this run as an experiment")
+    ls.add_argument("json_path", metavar="eval.json")
+    ls.add_argument("--judge", metavar="judge.json", help="also upload the judge scores as feedback")
     stable = sub.add_parser("stability", help="check repeated eval JSON reports")
     stable.add_argument("reports", nargs="+")
     stable.add_argument("--known", action="append", default=[], metavar="SCENARIO:CHECK")
@@ -282,7 +335,10 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     if args.cmd == "resume" and bool(args.route) != bool(args.reason):
         p.error("--route and --reason go together")
-    commands = {"show": cmd_show, "ask": cmd_ask, "resume": cmd_resume, "eval": cmd_eval, "report": cmd_report, "stability": cmd_stability, "trace": cmd_trace}
+    commands = {
+        "show": cmd_show, "ask": cmd_ask, "resume": cmd_resume, "eval": cmd_eval, "report": cmd_report, "judge": cmd_judge,
+        "calibrate": cmd_calibrate, "langsmith-sync": cmd_langsmith_sync, "stability": cmd_stability, "trace": cmd_trace,
+    }
     return commands[args.cmd](args)
 
 
