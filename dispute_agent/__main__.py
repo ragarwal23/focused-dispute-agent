@@ -3,7 +3,8 @@
     python -m dispute_agent show [A-1002]
     python -m dispute_agent ask A-1002 "cust got hit w a late fee ... conf # ends in 8812" [--approve]
     python -m dispute_agent resume A-1002-20261027T101500Z (--approve | --route R --reason "..." | --answer "...")
-    python -m dispute_agent eval [--split dev] [--scenario S-01] [--min-disputed-acc 0.75] [--min-policy-recall 0.75] [--min-route-acc 0.75]
+    python -m dispute_agent eval [--split dev|heldout|all] [--scenario S-01] [--min-disputed-acc 0.75] [--min-policy-recall 0.75] [--min-route-acc 0.75]
+    python -m dispute_agent report runs/eval_<ts>.json --out dispute_agent/evaluation/reports/release_<date>.xlsx
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from dispute_agent.account_agent.agent import build_account_agent
 from dispute_agent.account_agent.derive import derived_json
 from dispute_agent.data import Route, load_dataset
 from dispute_agent.evaluation.evaluate import run_eval
+from dispute_agent.evaluation.report import render
 from dispute_agent.evaluation.validate import stability, trace_check
 from dispute_agent.orchestrator.graph import build_graph, sqlite_checkpointer
 from dispute_agent.orchestrator.run import Investigation, new_thread_id, resume, start, thread_config, thread_status
@@ -221,6 +223,10 @@ def cmd_eval(args: argparse.Namespace) -> int:
     )
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    return render(args.json_path, args.out)
+
+
 def cmd_stability(args: argparse.Namespace) -> int:
     reports = [json.loads(Path(path).read_text()) for path in args.reports]
     known = {tuple(value.split(":", 1)) for value in args.known}
@@ -262,6 +268,9 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--min-disputed-acc", type=float, default=0.0)
     ev.add_argument("--min-policy-recall", type=float, default=0.0)
     ev.add_argument("--min-route-acc", type=float, default=0.0)
+    rep = sub.add_parser("report", help="render one eval JSON next to golden.xlsx as a release workbook")
+    rep.add_argument("json_path", metavar="eval.json")
+    rep.add_argument("--out", required=True, metavar="release.xlsx")
     stable = sub.add_parser("stability", help="check repeated eval JSON reports")
     stable.add_argument("reports", nargs="+")
     stable.add_argument("--known", action="append", default=[], metavar="SCENARIO:CHECK")
@@ -270,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     if args.cmd == "resume" and bool(args.route) != bool(args.reason):
         p.error("--route and --reason go together")
-    commands = {"show": cmd_show, "ask": cmd_ask, "resume": cmd_resume, "eval": cmd_eval, "stability": cmd_stability, "trace": cmd_trace}
+    commands = {"show": cmd_show, "ask": cmd_ask, "resume": cmd_resume, "eval": cmd_eval, "report": cmd_report, "stability": cmd_stability, "trace": cmd_trace}
     return commands[args.cmd](args)
 
 
