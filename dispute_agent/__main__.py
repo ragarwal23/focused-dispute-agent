@@ -3,7 +3,8 @@
     python -m dispute_agent show [A-1002]
     python -m dispute_agent ask A-1002 "cust got hit w a late fee ... conf # ends in 8812" [--approve]
     python -m dispute_agent resume A-1002-20261027T101500Z (--approve | --route R --reason "..." | --answer "...")
-    python -m dispute_agent eval [--split dev|heldout|all] [--scenario S-01] [--min-disputed-acc 0.75] [--min-policy-recall 0.75] [--min-route-acc 0.75]
+    python -m dispute_agent eval [--split dev|heldout|all] [--scenario S-01] [--min-disputed-acc 0.75] [--min-policy-recall 0.75] [--min-route-acc 0.75] [--experiment]
+    python -m dispute_agent judge runs/eval_<ts>.json [--experiment]
     python -m dispute_agent report runs/eval_<ts>.json --out dispute_agent/evaluation/reports/release_<date>.xlsx
 """
 
@@ -18,11 +19,13 @@ from pathlib import Path
 from typing import Any, get_args
 
 from langchain_core.messages import AIMessage, ToolMessage
+from langsmith import Client, evaluate_existing
 
 from dispute_agent.account_agent.agent import build_account_agent
 from dispute_agent.account_agent.derive import derived_json
 from dispute_agent.data import Route, load_dataset
 from dispute_agent.evaluation.evaluate import run_eval
+from dispute_agent.evaluation.experiment import NO_KEY, append_judge, experiment_line
 from dispute_agent.evaluation.golden import read_golden
 from dispute_agent.evaluation.report import render
 from dispute_agent.evaluation.validate import stability, trace_check
@@ -214,7 +217,7 @@ def cmd_resume(args: argparse.Namespace) -> int:
 def cmd_eval(args: argparse.Namespace) -> int:
     return run_eval(
         args.data, args.split, args.scenario, args.min_disputed_acc, args.min_policy_recall, args.min_route_acc,
-        args.producer,
+        args.producer, args.experiment,
     )
 
 
@@ -231,8 +234,22 @@ def cmd_judge(args: argparse.Namespace) -> int:
     except (ValueError, json.JSONDecodeError, OSError) as exc:
         print(f"judge: {exc}")
         return 2
-    judge_report(Path(args.json_path), data, load_dataset(args.data), read_golden())
+    if args.experiment and not data.get("experiment_name"):  # both refusals come before the paid judge calls
+        print(f"judge: {args.json_path} was not captured with --experiment")
+        return 2
+    if args.experiment and not os.getenv("LANGSMITH_API_KEY"):
+        print(f"judge: {NO_KEY}")
+        return 2
+    sidecar = judge_report(Path(args.json_path), data, load_dataset(args.data), read_golden())
+    if args.experiment:
+        client, evaluate_existing = langsmith_client()
+        name, url = experiment_line(append_judge(client, evaluate_existing, data["experiment_name"], json.loads(sidecar.read_text())))
+        print(f"experiment {name}: {url or 'no URL returned'}")
     return 0
+
+
+def langsmith_client() -> tuple[Any, Any]:
+    return Client(), evaluate_existing
 
 
 def cmd_calibrate(args: argparse.Namespace) -> int:
@@ -255,7 +272,7 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
 
 
 def cmd_langsmith_sync(args: argparse.Namespace) -> int:
-    from dispute_agent.evaluation.validate import sync_langsmith
+    from dispute_agent.evaluation.experiment import sync_langsmith
 
     return sync_langsmith(Path(args.json_path), Path(args.judge) if args.judge else None)
 
@@ -303,6 +320,8 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--min-route-acc", type=float, default=0.0)
     ev.add_argument("--producer", default="agent", choices=["agent", "golden_echo", "empty_stub"],
                     help="what answers: the live agent, the golden key itself, or an empty answer (both no LLM)")
+    ev.add_argument("--experiment", action="store_true",
+                    help="run as a LangSmith experiment on the golden dataset (each row carries its trace)")
     rep = sub.add_parser("report", help="render one eval JSON next to golden.xlsx as a release workbook")
     rep.add_argument("json_path", metavar="eval.json")
     rep.add_argument("--out", required=True, metavar="release.xlsx")
@@ -311,13 +330,14 @@ def main(argv: list[str] | None = None) -> int:
     rep.add_argument("--labels", metavar="labels.xlsx", help="hand labels (needs --judge): adds the Calibration sheet")
     jd = sub.add_parser("judge", help="score every case note in an eval JSON with the Opus judge (LLM)")
     jd.add_argument("json_path", metavar="eval.json")
+    jd.add_argument("--experiment", action="store_true", help="also append the scores to the experiment named in the eval JSON")
     cal = sub.add_parser("calibrate", help="build the hand-label workbook, or check the judge against it")
     cal_mode = cal.add_mutually_exclusive_group(required=True)
     cal_mode.add_argument("--build", metavar="eval.json", help="write the labels workbook for this run's dev notes")
     cal_mode.add_argument("--check", metavar="judge.json", help="agreement of this judge sidecar with --labels")
     cal.add_argument("--labels", metavar="labels.xlsx", default="dispute_agent/evaluation/labels.xlsx")
     cal.add_argument("--out", metavar="labels.xlsx", default="dispute_agent/evaluation/labels.xlsx")
-    ls = sub.add_parser("langsmith-sync", help="upload golden.xlsx as a LangSmith dataset and this run as an experiment")
+    ls = sub.add_parser("langsmith-sync", help="upload golden.xlsx as a LangSmith dataset if missing, and replay an eval JSON as an experiment")
     ls.add_argument("json_path", metavar="eval.json")
     ls.add_argument("--judge", metavar="judge.json", help="also upload the judge scores as feedback")
     stable = sub.add_parser("stability", help="check repeated eval JSON reports")

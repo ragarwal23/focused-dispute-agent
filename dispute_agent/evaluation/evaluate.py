@@ -25,16 +25,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from langsmith import Client
+from langsmith import evaluate as langsmith_evaluate
+
 from dispute_agent.account_agent.agent import build_account_agent
 from dispute_agent.account_agent.derive import derive_states, derived_json
 from dispute_agent.config import MODEL_ID, TOOL_BUDGET
 from dispute_agent.data import Dataset, Route, Scenario, load_dataset
+from dispute_agent.evaluation.experiment import NO_KEY, experiment_line, git_sha, replay_output, run_experiment
 from dispute_agent.evaluation.golden import GOLDEN_PATH, PRODUCERS
 from dispute_agent.evaluation.metrics import grade, row_verdicts
 from dispute_agent.evaluation.policy_checks import ruled_out
 from dispute_agent.orchestrator.graph import build_graph
 from dispute_agent.orchestrator.run import Investigation, investigate
-from dispute_agent.policy_agent.retrieve import load_policies
+from dispute_agent.policy_agent.retrieve import PolicySection, load_policies
 
 HEADER = (
     f"{'scenario':<9}{'trap':<15}{'wording':<8}"
@@ -142,6 +146,38 @@ def select_scenarios(ds: Dataset, split: str, scenario_id: str | None) -> list[S
     return [s for s in ds.scenarios.values() if split == "all" or s.split == split]
 
 
+def run_one(s: Scenario, graph: Any, ds: Dataset, sections: dict[str, PolicySection], producer: str) -> dict[str, Any]:
+    """Run and score one scenario as an eval JSON row; an exception is printed and recorded as the row, never raised."""
+    tags = [
+        f"scenario={s.scenario_id}", f"category={s.expected_category}", f"trap={s.trap}", f"wording={s.wording}",
+        f"note_driven={str(s.note_driven).lower()}", "slice=investigate",
+    ]
+    try:
+        if producer == "agent":
+            inv = investigate(ds, sections, None, s.account_id, s.rep_message, tags, s.scenario_id, graph=graph)
+        else:
+            inv = PRODUCERS[producer](ds, sections, s)
+    except Exception as exc:
+        print(f"{s.scenario_id:<9}EXCEPTION {type(exc).__name__}: {exc}")
+        return {"scenario_id": s.scenario_id, "exception": f"{type(exc).__name__}: {exc}"}
+    checks = score(s, inv, ds)
+    print(row_line(s, checks), flush=True)
+    findings, draft = inv.account["findings"], inv.synthesis.draft
+    return {
+        "scenario_id": s.scenario_id, "split": s.split, "trap": s.trap, "wording": s.wording,
+        "note_driven": s.note_driven, "category_pred": inv.category, "category_expected": s.expected_category,
+        "route_expected": s.expected_route, "case": inv.case.model_dump(),
+        "review": inv.review.model_dump(), "followups": inv.followups,
+        "checks": checks,
+        "findings": findings.model_dump() if findings else None,
+        "derived": derived_json(inv.derived),
+        "policy": inv.policy.model_dump(mode="json"),
+        "sync": inv.sync.model_dump(mode="json"),
+        "draft": draft.model_dump() if draft else None,
+        "tool_errors": inv.account["tool_errors"],
+    }
+
+
 def run_eval(
     data_dir: str,
     split: str,
@@ -150,51 +186,52 @@ def run_eval(
     min_policy_recall: float,
     min_route_acc: float = 0.0,
     producer: str = "agent",
+    experiment: bool = False,
 ) -> int:
     """Score the split (or one scenario), write runs/eval_<timestamp>.json, return the exit code.
 
     `producer` is the live agent by default; `golden_echo` and `empty_stub` (golden.py) score the key and an empty
-    answer through the same path with no LLM, to prove the scorer itself before a model is graded.
+    answer through the same path with no LLM, to prove the scorer itself before a model is graded. `experiment` runs
+    the same rows as a LangSmith experiment on the golden dataset, so each row's trace is attached to its scores.
     """
+    if experiment and not os.getenv("LANGSMITH_API_KEY"):
+        print(f"eval: {NO_KEY}")
+        return 2
+    stamp = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}"  # names both the JSON and the experiment
+    out_path = Path("runs") / f"eval_{stamp}.json"
     ds = load_dataset(data_dir)
     sections = load_policies(Path(data_dir) / "policies")
     graph = build_graph(ds, sections, build_account_agent(ds)) if producer == "agent" else None
     scenarios = select_scenarios(ds, split, scenario_id)
-    if os.getenv("LANGSMITH_TRACING", "").lower() == "true":
+    if os.getenv("LANGSMITH_TRACING", "").lower() == "true" and not experiment:  # experiment runs go to their own project
         print(f"tracing to LangSmith project: {os.getenv('LANGSMITH_PROJECT', 'default')}")
     print(HEADER)
 
-    rows: list[dict[str, Any]] = []
-    for s in scenarios:
-        tags = [
-            f"scenario={s.scenario_id}", f"category={s.expected_category}", f"trap={s.trap}", f"wording={s.wording}",
-            f"note_driven={str(s.note_driven).lower()}", "slice=investigate",
-        ]
+    linked: dict[str, Any] = {}
+    if experiment:
+        chosen, by_id = {s.scenario_id: s for s in scenarios}, {}
+
+        def target(inputs: dict[str, Any]) -> dict[str, Any]:
+            row = by_id[inputs["scenario_id"]] = run_one(chosen[inputs["scenario_id"]], graph, ds, sections, producer)
+            return replay_output(row)
+
         try:
-            if producer == "agent":
-                inv = investigate(ds, sections, None, s.account_id, s.rep_message, tags, s.scenario_id, graph=graph)
-            else:
-                inv = PRODUCERS[producer](ds, sections, s)
-        except Exception as exc:
-            print(f"{s.scenario_id:<9}EXCEPTION {type(exc).__name__}: {exc}")
-            rows.append({"scenario_id": s.scenario_id, "exception": f"{type(exc).__name__}: {exc}"})
-            continue
-        checks = score(s, inv, ds)
-        print(row_line(s, checks), flush=True)
-        findings, draft = inv.account["findings"], inv.synthesis.draft
-        rows.append({
-            "scenario_id": s.scenario_id, "split": s.split, "trap": s.trap, "wording": s.wording,
-            "note_driven": s.note_driven, "category_pred": inv.category, "category_expected": s.expected_category,
-            "route_expected": s.expected_route, "case": inv.case.model_dump(),
-            "review": inv.review.model_dump(), "followups": inv.followups,
-            "checks": checks,
-            "findings": findings.model_dump() if findings else None,
-            "derived": derived_json(inv.derived),
-            "policy": inv.policy.model_dump(mode="json"),
-            "sync": inv.sync.model_dump(mode="json"),
-            "draft": draft.model_dump() if draft else None,
-            "tool_errors": inv.account["tool_errors"],
-        })
+            results = run_experiment(
+                Client(), langsmith_evaluate, target, by_id, set(chosen),
+                prefix=f"{'release' if producer == 'agent' else producer}-{stamp}",
+                description="Live capture: the graph on every golden scenario, scored by the six code axes; "
+                            "judge feedback is added by `judge --experiment`",
+                metadata={"model_id": MODEL_ID, "producer": producer, "split": split, "git_sha": git_sha(),
+                          "eval_path": str(out_path)},
+            )
+        except RuntimeError as exc:  # the dataset on LangSmith no longer matches golden.xlsx
+            print(f"eval: {exc}")
+            return 1
+        rows = [by_id[s.scenario_id] for s in scenarios if s.scenario_id in by_id]
+        name, url = experiment_line(results)
+        linked = {"experiment_name": name, "experiment_url": url}
+    else:
+        rows = [run_one(s, graph, ds, sections, producer) for s in scenarios]
 
     scored = [r for r in rows if "checks" in r]
     failures = len(rows) - len(scored) + sum(r["findings"] is None for r in scored)  # exceptions + failed finalizes
@@ -206,11 +243,10 @@ def run_eval(
     policy_recall = sum(bool(r["checks"]["policy_cited_ok"]) for r in scored) / n
     route_acc = totals["route_ok"] / n
 
-    out_path = Path("runs") / f"eval_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
     out_path.parent.mkdir(exist_ok=True)
     report = {
         "category_source": "classify", "split": split, "model_id": MODEL_ID, "golden_path": GOLDEN_PATH,
-        "producer": producer, "rows": rows, "totals": totals,
+        "producer": producer, "rows": rows, "totals": totals, **linked,
     }
     out_path.write_text(json.dumps(report, indent=2, default=str))
     print(
@@ -221,5 +257,7 @@ def run_eval(
     print("\n".join(confusion_lines(scored)))
     grades = [grade(row_verdicts(r)) for r in rows]
     print(f"grade PASS {grades.count('PASS')}/{len(rows)}")
+    if linked:
+        print(f"experiment {linked['experiment_name']}: {linked['experiment_url'] or 'no URL returned'}")
     below = disputed_acc < min_disputed_acc or policy_recall < min_policy_recall or route_acc < min_route_acc
     return 1 if failures or below else 0

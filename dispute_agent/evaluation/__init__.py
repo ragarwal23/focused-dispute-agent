@@ -7,8 +7,9 @@
     metrics.py   the six axes over those checks (PASS / PARTIAL / FAIL), grade, score, slices, before/after
     judge.py     the Opus judge: four 0-3 scores on the case note (`judge`), and agreement with hand labels (`calibrate`)
     report.py    one eval JSON next to golden.xlsx as a release workbook with verdicts and judge panels (`report`)
-    validate.py  stability over repeated evals, LangSmith trace-shape checks, and the LangSmith dataset + experiment
-                 upload (`stability`, `trace`, `langsmith-sync`)
+    experiment.py  the LangSmith dataset (created once, never deleted), `eval --experiment` and `judge --experiment`,
+                 and `langsmith-sync` (replay an older eval JSON as an experiment)
+    validate.py  stability over repeated evals and LangSmith trace-shape checks (`stability`, `trace`)
 
 README.md explains the workbooks, the metrics and the three stages: eval, judge, report.
 """

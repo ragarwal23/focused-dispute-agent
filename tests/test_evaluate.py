@@ -9,6 +9,7 @@ from dispute_agent.evaluation.evaluate import CHECKS, HEADER, confusion_lines, r
 from dispute_agent.evaluation.golden import investigation
 from dispute_agent.sync.synthesize import Draft
 from test_derive import oracle_findings
+from test_experiment import FakeLangSmith
 from test_review import graph_for, s15_agent
 
 DATA = str(Path(__file__).resolve().parent.parent / "data")
@@ -82,8 +83,38 @@ def test_producer_exit_codes(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("dispute_agent.evaluation.evaluate.build_graph", lambda *a, **k: pytest.fail("graph built"))
     assert run_eval(DATA, "all", None, 1.0, 1.0, 1.0, producer="golden_echo") == 0
-    assert "grade PASS 16/16" in capsys.readouterr().out
-    report = json.loads(max((tmp_path / "runs").glob("eval_*.json")).read_text())
-    assert report["producer"] == "golden_echo" and len(report["rows"]) == 16
+    out = capsys.readouterr().out
+    path = max((tmp_path / "runs").glob("eval_*.json"))
+    assert f"wrote runs/{path.name}" in out and "grade PASS 16/16" in out  # the stamp is fixed before the run
+    report = json.loads(path.read_text())
+    assert report["producer"] == "golden_echo" and len(report["rows"]) == 16 and "experiment_name" not in report
     assert run_eval(DATA, "dev", None, 0, 0, 0, producer="empty_stub") == 1
     assert "grade PASS 0/12" in capsys.readouterr().out
+
+
+def test_eval_experiment_golden_echo(tmp_path, monkeypatch, capsys):
+    """--experiment runs the same rows through a LangSmith experiment: JSON and experiment share the stamp, the split
+    picks the examples, rows run one at a time; without a key it stops before any graph is built."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("dispute_agent.evaluation.evaluate.build_graph", lambda *a, **k: pytest.fail("graph built"))
+    client = FakeLangSmith()
+    monkeypatch.setattr("dispute_agent.evaluation.evaluate.Client", lambda: client)
+    monkeypatch.setattr("dispute_agent.evaluation.evaluate.langsmith_evaluate", client.evaluate)
+    monkeypatch.setenv("LANGSMITH_API_KEY", "k")
+    assert run_eval(DATA, "all", None, 1.0, 1.0, 1.0, producer="golden_echo", experiment=True) == 0
+    path = next((tmp_path / "runs").glob("eval_*.json"))
+    report = json.loads(path.read_text())
+    assert len(report["rows"]) == 16 and report["experiment_name"] == "release-x" and report["experiment_url"].startswith("https://")
+    assert client.kwargs["experiment_prefix"] == "golden_echo-" + path.stem.removeprefix("eval_")
+    assert client.kwargs["max_concurrency"] == 0 and client.kwargs["metadata"]["eval_path"] == f"runs/{path.name}"
+    assert all(fb[0]["results"][6]["value"] == "PASS" for _, fb in client.feedback.values())  # every grade PASS
+    assert capsys.readouterr().out.strip().endswith("experiment release-x: https://smith.langchain.com/o/x/datasets/ds-1/compare?e=1")
+    client = FakeLangSmith()
+    monkeypatch.setattr("dispute_agent.evaluation.evaluate.langsmith_evaluate", client.evaluate)
+    assert run_eval(DATA, "dev", None, 0, 0, 0, producer="golden_echo", experiment=True) == 0
+    assert len(client.feedback) == 12 and not {"S-04", "S-08", "S-12", "S-16"} & set(client.feedback)
+    capsys.readouterr()
+    monkeypatch.delenv("LANGSMITH_API_KEY")
+    monkeypatch.setattr("dispute_agent.evaluation.evaluate.load_dataset", lambda *a: pytest.fail("ran without a key"))
+    assert run_eval(DATA, "all", None, 0, 0, 0, experiment=True) == 2
+    assert capsys.readouterr().out.strip() == "eval: LANGSMITH_API_KEY is not set"

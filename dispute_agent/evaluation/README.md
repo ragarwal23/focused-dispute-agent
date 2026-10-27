@@ -6,6 +6,13 @@ release workbook. The same axes score every scenario; only the golden values dif
 scorer is proven on the key itself (`eval --producer golden_echo`, 16/16 PASS) and on an empty answer (`empty_stub`,
 exit 1).
 
+**Results: [the release experiment in LangSmith](https://smith.langchain.com/o/8d29be8b-8f57-4da6-8367-a770a98930ed/datasets/7d3c940e-0e7c-4b8d-bd0d-5b80c4a99476/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737)**, one row per scenario with its trace, the six code axes and
+the four judge scores. Also available locally:
+[`reports/release_2026-10-27_v0.8.xlsx`](reports/release_2026-10-27_v0.8.xlsx), the same run as a workbook that adds the
+`Slices` and `Compare` sheets LangSmith does not draw. In LangSmith a PARTIAL counts 0.5 in the column
+averages and a judge score shows as a fraction of 3 (0.67 is 2 of 3; hover it for the reason); the workbook counts
+PASS and shows 0-3.
+
 ## Files
 
 | File | What it is |
@@ -17,9 +24,10 @@ exit 1).
 | [`metrics.py`](metrics.py) | The six axes over those checks (PASS / PARTIAL / FAIL), grade and score per scenario, slices, before/after compare |
 | [`judge.py`](judge.py) | The `judge` command: Claude Opus 5.5 scores four axes 0-3 per case note into `runs/judge_<ts>.json`; `calibrate --check` measures its agreement with the hand labels |
 | [`report.py`](report.py) | The `report` command: one eval JSON (+ judge sidecar, + an older JSON, + labels) and `golden.xlsx` into a release workbook; `calibrate --build` writes the labels workbook |
-| [`validate.py`](validate.py) | `stability` over repeated evals, LangSmith `trace` shapes, and `langsmith-sync`: the golden dataset and the release experiment |
+| [`experiment.py`](experiment.py) | The LangSmith side: the golden dataset (created once, never deleted, since deleting it deletes its experiments), `eval --experiment`, `judge --experiment`, and `langsmith-sync` to replay an older JSON |
+| [`validate.py`](validate.py) | `stability` over repeated evals and LangSmith `trace` shapes |
 | [`labels.xlsx`](labels.xlsx) | The 12 dev case notes of the 2026-10-27 release with four empty 0-3 columns for Rachit to score (see Calibration) |
-| [`reports/`](reports/) | One committed release workbook per release: [`release_2026-10-27.xlsx`](reports/release_2026-10-27.xlsx), then [`release_2026-10-27_no-gate.xlsx`](reports/release_2026-10-27_no-gate.xlsx) |
+| [`reports/`](reports/) | One committed workbook per release; [`release_2026-10-27_v0.8.xlsx`](reports/release_2026-10-27_v0.8.xlsx) is the local copy of the linked experiment |
 
 ## The golden workbook
 
@@ -39,20 +47,26 @@ stale `golden.xlsx` fails `pytest`.
 ## The three stages
 
 ```bash
-python -m dispute_agent eval --producer golden_echo --split all     # 1. prove the scorer: the key itself, 16/16 PASS, no LLM
-python -m dispute_agent eval --producer empty_stub --split dev      #    and an empty answer: exit 1
-python -m dispute_agent eval --split all                            # 2. capture: one pass over all 16 scenarios, about $1
-python -m dispute_agent judge runs/eval_<ts>.json                   # 3. judge: Opus scores every case note, about $1
+python -m dispute_agent eval --producer golden_echo --split all --experiment   # 1. prove the scorer: the key itself, 16/16 PASS, no LLM
+python -m dispute_agent eval --producer empty_stub --split dev                 #    and an empty answer: exit 1
+python -m dispute_agent eval --split all --experiment                          # 2. capture as a LangSmith experiment, about $1
+python -m dispute_agent judge runs/eval_<ts>.json --experiment                 # 3. judge: Opus scores every note, added to the experiment, about $1
 python -m dispute_agent report runs/eval_<ts>.json --judge runs/judge_<ts>.json \
     --before runs/eval_<older>.json --labels dispute_agent/evaluation/labels.xlsx \
-    --out dispute_agent/evaluation/reports/release_<date>.xlsx            # 4. render the release workbook
-python -m dispute_agent langsmith-sync runs/eval_<ts>.json --judge runs/judge_<ts>.json   # 5. dataset + experiment
+    --out dispute_agent/evaluation/reports/release_<date>.xlsx                    # 4. the local workbook
+python -m dispute_agent langsmith-sync runs/eval_<older>.json                  # replay an older JSON as an experiment, no model call
 ```
+
+With `--experiment`, each scenario runs as one row of a LangSmith experiment on the dataset `dispute-agent-golden`: the
+row's trace is the real `dispute S-xx` run (both agents, synthesize, the review pause and its resume), its feedback is
+the 13 metrics, and the JSON records `experiment_name` and `experiment_url`. Those traces live in the experiment's own
+project, so `trace --last N` (which reads `LANGSMITH_PROJECT`) sees only `ask` runs. Without the flag `eval` runs the
+same rows offline from LangSmith's point of view, traced to `LANGSMITH_PROJECT` as before.
 
 `eval --split all` runs dev and held-out together; the JSON it writes carries every field the workbook and the judge
 need plus `model_id`, `golden_path` and `producer`. `runs/` is git-ignored: the JSONs stay local, the rendered workbook
-and `labels.xlsx` are committed by hand. The 2026-10-27 capture is the brief's one held-out run: nothing is tuned on
-`S-04`, `S-08`, `S-12` or `S-16`, and they are never in `labels.xlsx`.
+and `labels.xlsx` are committed by hand. The held-out four (`S-04`, `S-08`, `S-12`, `S-16`) were run twice after tuning,
+with nothing changed between the passes; nothing is tuned on them, and they are never in `labels.xlsx`.
 
 ## The metrics
 
@@ -123,54 +137,9 @@ main project keeps seeing only graph runs.
   agent's note. Then `Run detail` (synthesize errors, sync issues, the Account Agent's summary, tool calls and errors)
   and, with `--judge`, a `Judge` panel: axis, score, reason, and the quoted span that cost the point.
 
-## Release 2026-10-27, no gate (v0.8)
-
-Three dev passes after the runtime gate was removed ([validation log](../../docs/history/validation.md), "Gate removed"): `runs/eval_20261027T182359Z.json`,
-`T182756Z.json`, `T183153Z.json`. `stability --known S-11:route_ok` passed with every cell 3/3 except the known S-11
-route miss; `policy_consistent` 12/12 on all three. Workbook (pass T183153Z, no judge run, `Compare` against the release
-below): [`reports/release_2026-10-27_no-gate.xlsx`](reports/release_2026-10-27_no-gate.xlsx).
-
-| 12 dev | route | disputed_event | evidence | policy | confidence | guardrails | grade PASS |
-|---|---|---|---|---|---|---|---|
-| release below | 10/12 | 12/12 | 11/12 | 11/12 | 11/12 | 12/12 | 10/12 |
-| no gate | 11/12 | 12/12 | 12/12 | 12/12 | 12/12 | 12/12 | 11/12 |
-
-Every change is S-07 writing a draft this time; synthesize runs before where the gate was, so that is run-to-run
-variance, not the change. What the change shows is that nothing regressed.
-
-## Release 2026-10-27
-
-Capture `runs/eval_20261027T174341Z.json` (all 16, Sonnet 5.5), judge `runs/judge_20261027T180514Z.json` (Opus 5.5,
-16 judged, 0 errors), before `runs/eval_20261026T224024Z.json` (the pre-F1 dev run). Workbook:
-[`reports/release_2026-10-27.xlsx`](reports/release_2026-10-27.xlsx).
-
-| | route | disputed_event | evidence | policy | confidence | guardrails | grade PASS |
-|---|---|---|---|---|---|---|---|
-| all 16 | 14/16 | 16/16 | 15/16 | 13/16 | 15/16 | 16/16 | 12/16 |
-
-Judge means over the 16: no_invented_facts 2.81, matches_rationale 2.56, ready_to_file 2.56, no_leaks_or_promises 2.81. Every note that
-exists scored 3 on no_invented_facts and no_leaks_or_promises; the points lost are on reasoning agreement and ready_to_file, and every one
-of them carries a quoted span in the workbook.
-
-What the matrix and the judge found:
-
-- **S-07 produced no draft again** (synthesize's schema rejected a citation of the other customer's event; the run fell
-  back to `manual_escalation`, the correct route, with an empty note). It is the only scenario that regressed against the
-  pre-F1 run and the only one the judge scored 0. Still the known open finding from the [validation log](../../docs/history/validation.md).
-- **S-11 is the known route miss** (`explain_events` where the key wants `need_more_evidence`); the judge also marks
-  its note PARTIAL on ready_to_file because it asks for a bank letter but leaves `open_questions` empty.
-- **Two held-out scenarios fail only on `policy`**: S-04 and S-12 retrieve and cite the required sections but the draft
-  omits one. First look at the held-out set; nothing is tuned on it.
-- **Reasoning agreement is where the judge is strictest**: S-06, S-08, S-11 and S-13 get a 2 for a note that reaches the
-  right conclusion but skips a step of the rationale (which policy sets the window, why the duplicate case matters).
-
-LangSmith: dataset `dispute-agent-golden` and the experiment `release-20261027T174341Z-90f5290d`, both at
-<https://smith.langchain.com/o/8d29be8b-8f57-4da6-8367-a770a98930ed/datasets/7d3c940e-0e7c-4b8d-bd0d-5b80c4a99476/compare?selectedSessions=649fe260-f92e-4f55-b92e-5cf9a357ad11>.
-The experiment's target replays the stored JSON (no model call); its feedback keys are the 13 metric names.
-
 ## Calibration
 
-`labels.xlsx` holds the 12 dev notes of this release, scored by Rachit on 2026-10-27 (four 0-3 columns; `How to score`
+`labels.xlsx` holds the 12 dev notes of the first 2026-10-27 release, scored by Rachit on 2026-10-27 (four 0-3 columns; `How to score`
 has the scale). `calibrate --check` compares those scores to the judge's:
 
 ```bash
@@ -191,7 +160,8 @@ judge 2 / human 3), and Rachit is stricter on S-06 (`matches_rationale`, judge 2
 reason, the note calls the "77" reference matches coincidental where the key says it belongs to another customer).
 
 **What this calibration does not show.** Ten of twelve notes are near-perfect, so agreement is mostly at the ceiling:
-it proves the judge does not invent failures, not that it would catch a bad note. No note in this release leaks another
-customer's details or promises a refund, so `no_leaks_or_promises` has had nothing to catch. The next step is a set of
+it proves the judge does not invent failures, not that it would catch a bad note. No labelled note leaks another
+customer's details or promises a refund, so the labels never tested `no_leaks_or_promises`; in the v0.8 release it
+did catch one real leak, S-07's note naming the other customer's account. The next step is a set of
 deliberately broken notes (an invented amount, a mention of E-0135, a promised refund, a right route with a wrong
 reason) graded by the judge to show it drops the right axis. Not built.

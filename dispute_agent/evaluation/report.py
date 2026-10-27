@@ -23,7 +23,7 @@ from dispute_agent.evaluation.metrics import (
     row_verdicts, score_str, slice_table,
 )
 
-RUN_KEYS = ("json_path", "captured_at", "model_id", "producer", "split", "scenarios", "exceptions", "golden_path", "judge_path", "before_path")
+RUN_KEYS = ("json_path", "captured_at", "model_id", "producer", "split", "scenarios", "exceptions", "golden_path", "judge_path", "before_path", "experiment")
 CASE_COLS = [
     "#", "scenario_id", "split", "trap", "wording", "note_driven", "complaint", "golden_route", "actual_route",
     "golden_disputed", "actual_disputed", "policy_consistent", "case_created", "status",
@@ -321,6 +321,7 @@ def write_report(
         "producer": data.get("producer", "agent"), "split": data.get("split", ""), "scenarios": len(rows),
         "exceptions": sum("exception" in r for r in rows.values()), "golden_path": data.get("golden_path", ""),
         "judge_path": f"{judge['judge_model']} via judge sidecar" if judge else "", "before_path": str(before[1]) if before else "",
+        "experiment": data.get("experiment_url") or data.get("experiment_name", ""),  # the LangSmith experiment, when captured with --experiment
     }
     for key in RUN_KEYS:
         run.append([key, values[key]])

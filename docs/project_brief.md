@@ -109,7 +109,7 @@ Four scenarios per category: three dev, one held out. Every route appears three 
 | `note_driven` | `true` if the answer depends on reading a rep note (4 scenarios) |
 | `trap` | `none`, `missing_record`, `out_of_order`, `wrong_account`, `duplicate`, `injection`, `ambiguous` |
 
-The held-out four were run once, after tuning. With four cases they are a sanity check against overfitting, not a measurement. Slices of six or fewer are directional only.
+The held-out four were run twice after tuning, with nothing changed between the passes: once for the first release and once to capture the release experiment. With four cases they are a sanity check against overfitting, not a measurement. Slices of six or fewer are directional only.
 
 ### Metrics
 
@@ -131,8 +131,8 @@ The P1–P7 checks are plain Python over structured event fields. They need no a
 ### Process
 
 1. Run the dev set, read the traces in LangSmith, find the most common or most dangerous failure.
-2. Make one change, rerun, and compare per scenario and per axis (the release workbook's `Compare` sheet).
-3. Run the held-out set once and report the numbers as they are.
+2. Make one change, rerun, and compare per scenario and per axis (two experiments side by side in LangSmith, or the workbook's `Compare` sheet).
+3. Run the held-out set after tuning and report the numbers as they are (run twice, untuned, to capture the experiment).
 
 **Not built:** a code-only baseline on the same scenarios, and a judge sensitivity test on deliberately broken notes.
 

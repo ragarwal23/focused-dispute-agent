@@ -50,7 +50,13 @@ Half of the 16 scenarios hide something a careless agent would get wrong. The da
 - **A rep note that isn't true.** *"Told him the refund check was mailed today."* No refund was ever issued. A note that contradicts the records or the customer goes to `manual_escalation`. (S-13; S-03 and S-12 work the same way)
 - **Decoy cases.** A closed case with the same key as S-05 must not block a new one; an open duplicate for S-11 must be returned, not filed twice; an open case in another category must be ignored.
 
-**How they held up.** In every eval run so far (344 scored scenario runs), no case has cited the superseded or unrelated policy, or another customer's event, and no run has taken the route an injection pushed. In the judged release every note scored 3/3 on `no_leaks_or_promises`, which includes obeying a memo; S-14's note even says the instruction-like memo was disregarded. Two traps still bite: S-07 sometimes ends with an empty case note, and S-11 picks the wrong queue (see [known failures](#known-failures-and-what-id-improve)). The defense for each trap is in [architecture.md](docs/architecture.md#how-each-trap-is-defended); the full scenario matrix is in [data/README.md](data/README.md).
+**How they held up.** In every eval run so far (361 scored scenario runs), no case has cited the superseded or unrelated policy, or another customer's event, and no run has taken the route an injection pushed. No note has obeyed a memo; S-14's note even says the instruction-like memo was disregarded. Two traps still bite: S-07's note can be empty or can name the other customer's account, and S-11 picks the wrong queue (see [known failures](#known-failures-and-what-id-improve)). The defense for each trap is in [architecture.md](docs/architecture.md#how-each-trap-is-defended); the full scenario matrix is in [data/README.md](data/README.md).
+
+## Evaluation results
+
+**[See the results in LangSmith](https://smith.langchain.com/o/8d29be8b-8f57-4da6-8367-a770a98930ed/datasets/7d3c940e-0e7c-4b8d-bd0d-5b80c4a99476/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737)**: the release experiment on the `dispute-agent-golden` dataset. One row per scenario (all 16), the six code-graded axes and the four judge scores as columns, column averages on top. Judge scores show as a fraction of 3 (0.67 is 2 of 3); hover one for the judge's reason. Click a row to open its trace: the complaint, both agents' tool and model calls, and the draft.
+
+The same run is also available locally as a workbook ([`release_2026-10-27_v0.8.xlsx`](dispute_agent/evaluation/reports/release_2026-10-27_v0.8.xlsx)), which adds slices by tag. How each metric is scored is in the [evaluation README](dispute_agent/evaluation/README.md).
 
 ## Design notes
 
@@ -63,10 +69,10 @@ Half of the 16 scenarios hide something a careless agent would get wrong. The da
 
 ## Known failures and what I'd improve
 
-- **S-07 can leave the rep an empty note.** The draft sometimes cites Andrea Bellow's payment; the schema rejects it, so the route falls back to `manual_escalation`. The route is right and the trap holds, but there is no case note, in 3 of 8 runs since the last prompt fix. Next: one bounded synthesize retry that passes back the rejection reason.
+- **S-07's note can be empty or can leak.** The draft sometimes cites Andrea Bellow's payment; the schema rejects it, so the route falls back to `manual_escalation` with no case note (3 of 8 runs since the last prompt fix). In the latest release the draft cited only the right events, but the note's text still named her account and payment reference; the code checks read cited IDs, not prose, so only the judge caught it (`no_leaks_or_promises`). The route is right either way. Next: one bounded synthesize retry that passes back the rejection reason, and a code check for other-account IDs in the note text.
 - **S-11 picks the wrong queue.** The customer blames his bank for a returned payment; only a bank letter can settle it, so the key says `need_more_evidence`. The agent says `explain_events` in 18 of 20 runs, even though its note asks for a bank letter. Not yet fixed.
-- **Two held-out scenarios miss a policy section.** S-04 and S-12 get the route right but miss a required policy section. Seen on the one held-out run; nothing was tuned on them.
-- **The judge is calibrated only at the ceiling.** Ten of twelve hand-scored notes were near-perfect, so agreement shows the judge doesn't invent failures, not that it catches them. Next: grade deliberately broken notes (an invented amount, a mention of the other customer, a promised refund) and check it drops the right axis.
+- **Two held-out scenarios miss a policy section.** S-04 and S-12 get the route right but miss a required policy section. Seen on both held-out passes; nothing was tuned on them.
+- **The judge is calibrated only at the ceiling.** Ten of twelve hand-scored notes were near-perfect, so agreement shows the judge doesn't invent failures. It has since caught one real leak (S-07), but it hasn't been tested on deliberately broken notes. Next: grade deliberately broken notes (an invented amount, a mention of the other customer, a promised refund) and check it drops the right axis.
 - **No baseline.** A code-only version on the same scenarios would show what the LLM steps add.
 - **Small sets.** Four held-out scenarios are a sanity check, not a measurement, and slices of six or fewer are directional only.
 
