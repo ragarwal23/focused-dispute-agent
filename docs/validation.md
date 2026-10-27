@@ -3,9 +3,10 @@
 ## What was validated
 
 This records execution of the [live-validation plan](plans/live-validation.md): offline behavior, both forced
-re-request paths, three dev-eval repeats, and the twelve most recent normal LangSmith trace shapes. Validation
-paused before the ad-hoc complaints because the stability gate identified an out-of-tolerance structured-draft
-failure that requires a re-plan under the plan's prompt-change rule.
+re-request paths, three dev-eval repeats, and the twelve most recent normal LangSmith trace shapes. The first
+matrix failed the stability gate on S-07, which led to the F1/F1b Policy Agent prompt fix. After Rachit approved
+eval runs 7–9 on 2026-10-27, a second three-run matrix on the F1b wording passed the stability gate, and the eight
+ad-hoc complaints all matched their source scenarios on route and disputed event.
 
 ## Flake matrix
 
@@ -16,6 +17,18 @@ listed as known. All three reports had 0 send-backs, 0 re-retrieves, and 0 excep
 
 Each repeat had disputed-event accuracy 1.00, policy-citation recall 1.00, and route accuracy 0.92 (11/12),
 above the 0.75 thresholds.
+
+**After F1b** (`eval_20261027T022319Z.json`, `T022756Z.json`, `T023159Z.json`): `stability --known S-11:route_ok`
+exited 0. Every cell was 3/3 except S-11 `route_ok` 0/3 (known), and four 2/3 cells, all within the `n - 1` rule:
+
+| Scenario | Cells at 2/3 | Run | Cause |
+|---|---|---|---|
+| S-07 | `confidence_ok`, `draft_events_ok`, `draft_policy_ok` | T022319Z | Synthesize returned no draft (`draft = null`); the gate rejected with "no draft from synthesize" and routed `manual_escalation`, which is the correct route. Same failure as the S-07 open finding. |
+| S-02 | `category_ok`, `disputed_ok`, `draft_policy_ok` | T023159Z | Classified `missing_payment` instead of `late_fee_autopay`, so the Policy Agent read the wrong category's sections. Route was still `adjustment_review` (correct). |
+
+All three had 0 send-backs, 0 re-retrieves, 0 exceptions. Thresholds: disputed-event accuracy 1.00/1.00/0.92,
+policy-citation recall 1.00/1.00/0.92, route accuracy 0.92 on all three. Confusion matrix identical on all three:
+the only off-diagonal cell is S-11 (`need_more_evidence` → `explain_events`).
 
 ## Re-request paths
 
@@ -34,9 +47,25 @@ Account Agent and one Policy Agent call. The observed traces were 13.3–24.0 se
 
 ## Ad-hoc complaints
 
-Not run. The eight rephrasings in `plans/live-validation-adhoc.sh` are deliberately deferred until the S-07
-stability finding is resolved or explicitly accepted; running them after a failed gate would spend model budget
-without completing the planned validation claim.
+Run 2026-10-27 with `bash plans/live-validation-adhoc.sh` (exit 0), then `trace --last 8` (exit 0, all eight the
+normal eight-child shape). **8/8 matched on route and disputed event**, against the bet of 6/8. No gate rejections,
+no re-requests, no tool errors.
+
+| # | Source | Account | Expected route / disputed | Actual route / disputed | Match |
+|---|---|---|---|---|---|
+| L1 | S-01 | A-1001 | explain_events / E-0117 | explain_events / E-0117 | yes |
+| L2 | S-03 | A-1003 | manual_escalation / E-0122 | manual_escalation / E-0122 | yes |
+| L3 | S-05 | A-1005 | adjustment_review / E-0131 | adjustment_review / E-0131 | yes |
+| L4 | S-07 | A-1007 | manual_escalation / none | manual_escalation / none | yes |
+| L5 | S-09 | A-1010 | explain_events / E-0107 | explain_events / E-0107 | yes |
+| L6 | S-10 | A-1011 | adjustment_review / E-0142 | adjustment_review / E-0142 | yes |
+| L7 | S-14 | A-1015 | explain_events / E-0132 | explain_events / E-0132 | yes |
+| L8 | S-15 | A-1016 | need_more_evidence / none | need_more_evidence / none | yes |
+
+Traces were 16.9–24.5 s and $0.0561–$0.0742 each ($0.53 total). L2 and L6 are note-driven: the route depends on rep
+notes the gate cannot check, so they test the Account Agent and synthesize alone. In L4, the case note names
+`E-0135` as a possible misapplied payment on another account and tells the rep not to share its details. The draft's
+`event_ids` do not cite it.
 
 ## Per-component notes
 
@@ -66,16 +95,18 @@ two." One live `ask` each: S-14 rules again include `RF.v1.s1/s2/s3` and the dra
 
 The twelve sampled normal roots cost $0.7174. At that observed rate, the three 12-scenario evals cost about $2.15;
 the two forced-path runs cost $0.1669, for approximately $2.32 before the fix. The three post-F1 evals (≈ $2.15)
-and five single `ask` checks (≈ $0.25) bring the total to ≈ $4.70 of the $8 cap. The deferred ad-hoc runs have not
-spent budget.
+and five single `ask` checks (≈ $0.25) bring the total to ≈ $4.70. The three post-F1b evals (≈ $2.15, at the same
+rate) and the eight ad-hoc complaints ($0.53, measured) bring the total to ≈ $7.38 of the $8 cap.
 
 ## Open findings
 
-- **F1b is unvalidated at scale.** Next: three dev evals, then `stability --known S-11:route_ok`. This needs
-  eval runs 7–9, which are over the raised budget of 6, so it is a stop-and-ask.
-- **Ad-hoc complaints L1–L8 not run.** They come after the matrix above.
+- **Closed: F1b validated.** Three dev evals plus `stability` passed (above), approved by Rachit 2026-10-27.
+- **Closed: ad-hoc complaints L1–L8 run**, 8/8.
 - **Synthesize can fail outright on S-07.** In one live `ask` after F1b, the draft cited `E-0135` (the other
   customer's payment, which the key forbids). The narrowed `Draft` schema rejected it, and the run ended with no
   draft: gate → `manual_escalation`, case created, no case note. The route was correct and the trap held, but the rep
-  would get an empty note. This did not happen in any of the six evals. Synthesize is single-shot by design.
-  Recorded, not fixed.
+  would get an empty note. It recurred in 1 of the 3 post-F1b evals (`T022319Z`), so it is now seen in 2 of 4
+  S-07 runs after F1b. Synthesize is single-shot by design. Recorded, not fixed. The natural fix is one bounded
+  synthesize retry on a schema rejection, which needs its own plan.
+- **S-02 classification flake.** One run in three classified it `missing_payment`; the route held. Recorded.
+- **S-11 route miss** (known): the model routes `explain_events` where the key wants `need_more_evidence`.
