@@ -6,11 +6,10 @@ release workbook. The same axes score every scenario; only the golden values dif
 scorer is proven on the key itself (`eval --producer golden_echo`, 16/16 PASS) and on an empty answer (`empty_stub`,
 exit 1).
 
-**Results: [the release experiment in LangSmith](https://smith.langchain.com/o/8d29be8b-8f57-4da6-8367-a770a98930ed/datasets/7d3c940e-0e7c-4b8d-bd0d-5b80c4a99476/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737)**, one row per scenario with its trace, the six code axes and
+**Results: [the release experiment in LangSmith, public](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737)**, one row per scenario with its trace, the six code axes and
 the four judge scores. Also available locally:
 [`reports/release_2026-10-27_v0.8.xlsx`](reports/release_2026-10-27_v0.8.xlsx), the same run as a workbook that adds the
-`Slices` and `Compare` sheets LangSmith does not draw. In LangSmith a PARTIAL counts 0.5 in the column
-averages and a judge score shows as a fraction of 3 (0.67 is 2 of 3; hover it for the reason); the workbook counts
+`Slices` and `Compare` sheets LangSmith does not draw. In LangSmith a PARTIAL scores 0.5 and a judge score shows as a fraction of 3 (0.67 is 2 of 3; hover it for the reason); the workbook counts
 PASS and shows 0-3.
 
 ## Files

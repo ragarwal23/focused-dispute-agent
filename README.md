@@ -54,7 +54,7 @@ Half of the 16 scenarios hide something a careless agent would get wrong. The da
 
 ## Evaluation results
 
-**[See the results in LangSmith](https://smith.langchain.com/o/8d29be8b-8f57-4da6-8367-a770a98930ed/datasets/7d3c940e-0e7c-4b8d-bd0d-5b80c4a99476/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737)**: the release experiment on the `dispute-agent-golden` dataset. One row per scenario (all 16), the six code-graded axes and the four judge scores as columns, column averages on top. Judge scores show as a fraction of 3 (0.67 is 2 of 3); hover one for the judge's reason. Click a row to open its trace: the complaint, both agents' tool and model calls, and the draft.
+**[See the results in LangSmith](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737)** (public, no login): the release experiment on the `dispute-agent-golden` dataset. One row per scenario (all 16), the six code-graded axes and the four judge scores as columns. Judge scores show as a fraction of 3 (0.67 is 2 of 3); hover one for the judge's reason. Click a row to open its trace: the complaint, both agents' tool and model calls, and the draft.
 
 The same run is also available locally as a workbook ([`release_2026-10-27_v0.8.xlsx`](dispute_agent/evaluation/reports/release_2026-10-27_v0.8.xlsx)), which adds slices by tag. How each metric is scored is in the [evaluation README](dispute_agent/evaluation/README.md).
 
