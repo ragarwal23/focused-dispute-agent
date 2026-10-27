@@ -106,12 +106,12 @@ main project keeps seeing only graph runs.
 
 - **`Run`**: the JSON, when it was captured, the model, the producer, the split, counts, the judge model and the `before` run.
 - **`Cases`**: one row per golden case, golden route next to the final route, golden disputed event next to the Account
-  Agent's, `policy_consistent` (`ok` / `ruled out`, blank before v0.8), case created, attempts as `a1/p1`, and a
-  `status` (`OK`, `EXCEPTION`, `PENDING`).
+  Agent's, `policy_consistent` (`ok` / `ruled out`, blank before v0.8), case created, and a `status` (`OK`, `EXCEPTION`,
+  `PENDING`).
 - **`Verdict Matrix`**: one row per scenario: the six axes coloured PASS / PARTIAL / FAIL, `Grade`, `Score`, the four
-  judge scores coloured by their verdict (`ERR` when the judge failed twice), the judge mean, the P1–P7 result and the
-  attempts. A `total` row gives PASS counts per axis and judge means. Below it, the route confusion matrix (expected rows,
-  final columns).
+  judge scores coloured by their verdict (`ERR` when the judge failed twice), the judge mean and the P1–P7 result. A
+  `total` row gives PASS counts per axis and judge means. Below it, the route confusion matrix (expected rows, final
+  columns).
 - **`Slices`**: PASS counts per axis and grade by `wording`, `note_driven`, `trap`, `category` and `route`. A slice of six
   or fewer is marked `(directional)`, per the brief.
 - **`Compare`** (with `--before`): per-axis PASS counts for both runs over the scenarios they share, then every
@@ -120,12 +120,12 @@ main project keeps seeing only graph runs.
   both means, and every disagreement. `no labels yet` until the workbook is filled.
 - **`S-xx`**: `field | golden | actual | verdict`, the verdict being the axis that governs that field (`payment_state`
   and `refund_state` belong to no axis and stay blank). `rationale / case_note` puts the labeler's reasoning beside the
-  agent's note. Then `Run detail` (synthesize errors, sync issues, the Account Agent's summary, tool calls and errors, attempts)
+  agent's note. Then `Run detail` (synthesize errors, sync issues, the Account Agent's summary, tool calls and errors)
   and, with `--judge`, a `Judge` panel: axis, score, reason, and the quoted span that cost the point.
 
 ## Release 2026-10-27, no gate (v0.8)
 
-Three dev passes after the runtime gate was removed (`docs/validation.md`, "Gate removed"): `runs/eval_20261027T182359Z.json`,
+Three dev passes after the runtime gate was removed ([validation log](../../docs/history/validation.md), "Gate removed"): `runs/eval_20261027T182359Z.json`,
 `T182756Z.json`, `T183153Z.json`. `stability --known S-11:route_ok` passed with every cell 3/3 except the known S-11
 route miss; `policy_consistent` 12/12 on all three. Workbook (pass T183153Z, no judge run, `Compare` against the release
 below): [`reports/release_2026-10-27_no-gate.xlsx`](reports/release_2026-10-27_no-gate.xlsx).
@@ -156,7 +156,7 @@ What the matrix and the judge found:
 
 - **S-07 produced no draft again** (synthesize's schema rejected a citation of the other customer's event; the run fell
   back to `manual_escalation`, the correct route, with an empty note). It is the only scenario that regressed against the
-  pre-F1 run and the only one the judge scored 0. Still the known open finding from `docs/validation.md`.
+  pre-F1 run and the only one the judge scored 0. Still the known open finding from the [validation log](../../docs/history/validation.md).
 - **S-11 is the known route miss** (`explain_events` where the key wants `need_more_evidence`); the judge also marks
   its note PARTIAL on ready_to_file because it asks for a bank letter but leaves `open_questions` empty.
 - **Two held-out scenarios fail only on `policy`**: S-04 and S-12 retrieve and cite the required sections but the draft

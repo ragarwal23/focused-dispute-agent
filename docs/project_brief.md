@@ -21,7 +21,7 @@ Today the rep reads the complaint, digs through account history, rereads notes f
 
 | The LLM handles | Code handles |
 |---|---|
-| Interpreting vague or messy complaints | What runs next, the parallel fan-out, the bounded re-runs and failure handling |
+| Interpreting vague or messy complaints | What runs next, the parallel fan-out and failure handling |
 | Matching "the payment from Tuesday" to one specific event | Confirming that event is on this account, and deriving payment and refund state from its chain |
 | Reading free-text notes from earlier rep calls | Filtering policy by dispute category and effective date |
 | Reading policy written in prose, and flagging where it's unclear | Limiting citations to the event and section IDs the model was shown |
@@ -64,7 +64,7 @@ One LangGraph graph. Code decides what runs next; the LLM is called to classify,
 
 1. **Classify.** One LLM call picks the category.
 2. **Investigate, in parallel.** The **Account Agent** (LLM + five read-only tools, at most six calls) finds the disputed event, or every candidate if the complaint doesn't say which. Code then confirms the event is on this account and derives its state. The **Policy Agent** filters policy sections by category and date, ranks them with BM25, and one LLM call turns them into structured rules with citations.
-3. **Sync.** A code join checks that the two sets of findings line up. It can send each agent back once: the Account Agent if it returned nothing, the Policy Agent if a different policy set was in force on the disputed event's date.
+3. **Sync.** A code join checks that the two sets of findings line up: the account findings exist, each rule was in force on the disputed event's date, and the rules cover the category. Anything that doesn't line up is recorded and steers the draft to a cautious route. No agent is sent back, so every run takes the same path.
 4. **Synthesize.** One LLM call writes the draft: route, citations, facts, confidence, open questions and case note. Its output schema accepts only the IDs it was shown. If no draft comes back, the route falls back to `manual_escalation`.
 5. **Review.** The graph pauses for the rep, who approves, overrides the route with a reason, or answers the open questions once on `need_more_evidence`. A checkpointer saves state, so the run can resume later in a new process.
 6. **Create review case.** One simulated, idempotent write under the final route. Only the servicing backend moves money, and the agent has no access to it.
@@ -97,7 +97,7 @@ What makes the labels checkable and gives the LLM real work:
 
 ## 5. Evaluation
 
-Full method and results: [evaluation README](../dispute_agent/evaluation/README.md) and [validation.md](validation.md).
+Full method and results: [evaluation README](../dispute_agent/evaluation/README.md) and [validation log](history/validation.md).
 
 ### Dataset
 

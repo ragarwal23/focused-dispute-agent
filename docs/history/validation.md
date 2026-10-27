@@ -2,7 +2,7 @@
 
 ## What was validated
 
-This records execution of the [live-validation plan](plans/live-validation.md): offline behavior, both forced
+This records execution of the [live-validation plan](live-validation.md): offline behavior, both forced
 re-request paths, three dev-eval repeats, and the twelve most recent normal LangSmith trace shapes. The first
 matrix failed the stability gate on S-07, which led to the F1/F1b Policy Agent prompt fix. After Rachit approved
 eval runs 7–9 on 2026-10-26, a second three-run matrix on the F1b wording passed the stability gate, and the eight
@@ -117,7 +117,7 @@ rate) and the eight ad-hoc complaints ($0.53, measured) bring the total to ≈ $
 
 ## What changed and what was run
 
-The runtime gate node was removed ([plan](../tasks/remove-gate.md), architecture D10): the recommended route is now the
+The runtime gate node was removed ([plan](remove-gate.md), architecture D10): the recommended route is now the
 draft's, or `manual_escalation` when synthesize returns no draft, and our P1–P7 checks run in the eval as
 `policy_consistent` and a golden-label audit. Before removal, the 43 eval reports in `runs/` held 279 scored rows; the
 gate rejected 8 drafts (S-03 ×4, S-07 ×2, S-10, S-14) and in every one the draft had already chosen
