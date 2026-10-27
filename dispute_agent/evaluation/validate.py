@@ -1,13 +1,32 @@
-"""Small, code-only checks for repeated evals and LangSmith graph traces."""
+"""Small, code-only checks for repeated evals and LangSmith graph traces, and the LangSmith upload of a release.
+
+`langsmith-sync` puts golden.xlsx up as the dataset `dispute-agent-golden` (recreated each time; 16 rows) and one eval
+JSON up as an experiment whose target replays the stored rows, so no model is called: the experiment describes the same
+run the release workbook shows. Feedback keys are exactly the 13 metric names from metrics.py.
+"""
 
 from __future__ import annotations
 
+import json
+import os
 import time
 import warnings
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from dispute_agent.evaluation.evaluate import CHECKS
+from dispute_agent.evaluation.golden import Case, read_golden
+from dispute_agent.evaluation.metrics import (
+    AXES, JUDGE_AXES, SCORE_VALUE, grade, judge_mean, judge_scores, row_verdicts, score_str, score_value,
+)
+
+DATASET_NAME = "dispute-agent-golden"
+GOLDEN_OUTPUTS = (
+    "expected_category", "expected_route", "expected_disputed_event_id", "expected_required_event_ids",
+    "expected_forbidden_event_ids", "expected_payment_state", "expected_refund_state", "expected_existing_case_id",
+    "expected_policy_ids", "rationale",
+)
 
 NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "gate", "review"]  # a run pauses at review
 RESUME_HEAD = ["review", "account_agent_followup", "derive_states_followup", "sync"]  # a resume where the rep answered
@@ -123,3 +142,103 @@ def trace_check(client: Any, project: str, last: int = 1, wait: float = 30.0) ->
         )
         ok &= match
     return lines, ok
+
+
+def dataset_examples(cases: list[Case]) -> list[dict[str, Any]]:
+    """One LangSmith example per golden case: the complaint as inputs, every expected field as outputs, tags as metadata."""
+    return [{
+        "inputs": {"scenario_id": c.scenario_id, "account_id": c.account_id, "rep_message": c.rep_message},
+        "outputs": {k: getattr(c, k) for k in GOLDEN_OUTPUTS},
+        "metadata": {"split": c.split, "trap": c.trap, "wording": c.wording, "note_driven": c.note_driven},
+    } for c in cases]
+
+
+def upsert_dataset(client: Any, cases: list[Case]) -> Any:
+    """Recreate the golden dataset (16 rows, no example bookkeeping) and return it."""
+    if client.has_dataset(dataset_name=DATASET_NAME):
+        client.delete_dataset(dataset_name=DATASET_NAME)
+    dataset = client.create_dataset(DATASET_NAME, description="The dispute agent's golden scenarios (dispute_agent/evaluation/golden.xlsx)")
+    client.create_examples(dataset_id=dataset.id, examples=dataset_examples(cases))
+    return dataset
+
+
+def replay_output(row: dict[str, Any] | None) -> dict[str, Any]:
+    """What the stored run produced for one scenario, as the experiment's output (no model call)."""
+    if row is None:
+        return {"status": "not run"}
+    if "exception" in row:
+        return {"status": "exception", "exception": row["exception"]}
+    draft, gate, filed = row.get("draft") or {}, row.get("gate") or {}, row.get("case") or {}
+    return {
+        "status": "ok", "route": gate.get("route"), "draft_route": draft.get("review_route"),
+        "disputed_event_id": (row.get("findings") or {}).get("disputed_event_id"), "event_ids": draft.get("event_ids"),
+        "policy_source_ids": draft.get("policy_source_ids"), "confidence": draft.get("confidence"),
+        "open_questions": draft.get("open_questions"), "case_note": draft.get("case_note"),
+        "gate_rejected": gate.get("gate_rejected"), "case_created": filed.get("created"),
+    }
+
+
+def axes_feedback(row: dict[str, Any] | None) -> dict[str, Any]:
+    """The six axis verdicts, grade and score as LangSmith feedback (score 1 / 0.5 / 0, value PASS / PARTIAL / FAIL)."""
+    if row is None:
+        return {"results": []}
+    verdicts = row_verdicts(row)
+    results = [{"key": axis, "score": SCORE_VALUE[verdicts[axis]], "value": verdicts[axis]} for axis in AXES]
+    g = grade(verdicts)
+    results.append({"key": "grade", "score": SCORE_VALUE[g], "value": g})
+    results.append({"key": "score", "score": score_value(verdicts) / len(AXES), "value": score_str(verdicts)})
+    return {"results": results}
+
+
+def judge_feedback(judge_row: dict[str, Any] | None) -> dict[str, Any]:
+    """The four judge scores (0-3, uploaded as score/3) with the judge's reason as the comment, plus the mean."""
+    if judge_row is None:
+        return {"results": []}
+    scores = judge_scores(judge_row)
+    results = []
+    for axis in JUDGE_AXES:
+        s = scores[axis]
+        comment = judge_row.get("judge_error") if s is None else judge_row[axis]["reason"]
+        results.append({"key": axis, "score": None if s is None else s / 3, "value": "ERR" if s is None else s, "comment": comment})
+    mean = judge_mean(scores)
+    results.append({"key": "judge_mean", "score": None if mean is None else mean / 3, "value": mean})
+    return {"results": results}
+
+
+def sync_langsmith(eval_path: Path, judge_path: Path | None = None, client: Any = None, evaluate_fn: Any = None) -> int:
+    """The `langsmith-sync` command: dataset + experiment, prints the experiment URL. Exit 2 without an API key."""
+    if not os.getenv("LANGSMITH_API_KEY"):
+        print("langsmith-sync: LANGSMITH_API_KEY is not set")
+        return 2
+    data = json.loads(eval_path.read_text())
+    rows = {r["scenario_id"]: r for r in data["rows"]}
+    judge = json.loads(judge_path.read_text()) if judge_path else None
+    if judge is None:
+        print("langsmith-sync: no --judge sidecar, uploading the six code axes only")
+    if client is None or evaluate_fn is None:
+        from langsmith import Client, evaluate
+
+        client, evaluate_fn = client or Client(), evaluate_fn or evaluate
+    cases = read_golden()
+    upsert_dataset(client, cases)
+
+    def target(inputs: dict[str, Any]) -> dict[str, Any]:
+        return replay_output(rows.get(inputs["scenario_id"]))
+
+    def axes(run: Any, example: Any) -> dict[str, Any]:
+        return axes_feedback(rows.get(example.inputs["scenario_id"]))
+
+    def judged(run: Any, example: Any) -> dict[str, Any]:
+        return judge_feedback(judge["rows"].get(example.inputs["scenario_id"]))
+
+    stamp = eval_path.stem.replace("eval_", "")
+    results = evaluate_fn(
+        target, data=DATASET_NAME, evaluators=[axes] + ([judged] if judge else []),
+        experiment_prefix=f"release-{stamp}", max_concurrency=4, client=client,
+        description="Replay of a stored eval JSON scored by the six code axes" + (" and the Opus judge" if judge else ""),
+        metadata={"eval_path": str(eval_path), "judge_path": str(judge_path) if judge_path else None,
+                  "model_id": data.get("model_id"), "judge_model": judge["judge_model"] if judge else None},
+    )
+    url = getattr(results, "url", None)
+    print(f"experiment {getattr(results, 'experiment_name', '')}: {url or 'no URL returned'}")
+    return 0 if url else 1
