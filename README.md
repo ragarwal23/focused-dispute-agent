@@ -8,7 +8,7 @@ A LangGraph agent that investigates a customer's payment dispute and drafts a re
 2. **The diagram below, then [architecture.md](docs/architecture.md)**: every step, and which ones are LLM and which are plain code.
 3. **[The data](data/README.md)**: the synthetic accounts, events, review cases, eval scenarios and [policy documents](data/policies/). The [data contract](docs/data_contract.md) defines every column.
 4. **The code, in run order**: each box of the diagram is one folder in [`dispute_agent/`](dispute_agent/), and each folder's `__init__.py` lists its files in reading order. Start at [`orchestrator/graph.py`](dispute_agent/orchestrator/graph.py).
-5. **[Validation results](docs/validation.md)**: how the agent scores, run to run.
+5. **[Validation results](docs/validation.md)**: how the agent scores, run to run. Then the [evaluation README](dispute_agent/evaluation/README.md) and the first [release workbook](dispute_agent/evaluation/reports/release_2026-10-27.xlsx): every scenario's golden answer next to the agent's, one sheet each.
 
 ![Engineering architecture](docs/diagrams/architecture_v0.7.png)
 
@@ -27,7 +27,7 @@ A LangGraph agent that investigates a customer's payment dispute and drafts a re
 | 5 | Human review, create review case | [`review/`](dispute_agent/review/) | [`review.py`](dispute_agent/review/review.py) the pause and the rep's three actions · [`create_review_case.py`](dispute_agent/review/create_review_case.py) the only write | Rep, then code |
 
 Shared by every box: [`data.py`](dispute_agent/data.py) (record types and the Excel loader for [`data/`](data/)) and [`config.py`](dispute_agent/config.py) (model ID, the fictional "today", limits).
-Outside the run: [`evaluation/`](dispute_agent/evaluation/) scores the scenarios ([`evaluate.py`](dispute_agent/evaluation/evaluate.py)) and checks stability and LangSmith traces ([`validate.py`](dispute_agent/evaluation/validate.py)).
+Outside the run: [`evaluation/`](dispute_agent/evaluation/) scores the scenarios ([`evaluate.py`](dispute_agent/evaluation/evaluate.py)), keeps the golden workbook ([`golden.py`](dispute_agent/evaluation/golden.py)), renders a release workbook ([`report.py`](dispute_agent/evaluation/report.py)) and checks stability and LangSmith traces ([`validate.py`](dispute_agent/evaluation/validate.py)).
 Also outside the run: [`app/`](app/) is the rep's web page. [`server.py`](app/server.py) streams the same graph's steps, and [`narrate.py`](app/narrate.py) turns each node into a plain-language line marked AI, code or you.
 
 ## Repo layout
@@ -35,7 +35,7 @@ Also outside the run: [`app/`](app/) is the rep's web page. [`server.py`](app/se
 ```
 dispute_agent/          the agent: one folder per diagram box (table above)
 app/                    the web page: server.py + narrate.py (Python), src/ (React), Vite config
-  __main__.py           the CLI: show, ask, resume, eval, stability, trace
+  __main__.py           the CLI: show, ask, resume, eval, report, stability, trace
   config.py, data.py    shared settings and record types
 tests/                  one test file per source file, no LLM calls; shared fakes in conftest.py
 data/                   synthetic Excel data and policies/ (the policy documents the Policy Agent searches)
@@ -54,7 +54,7 @@ runs/                   git-ignored output: eval reports and checkpoints.sqlite 
 | [`test_gate.py`](tests/test_gate.py) | the gate and its P1–P7 checks, on all 16 scenarios |
 | [`test_create_review_case.py`](tests/test_create_review_case.py) | the write: duplicates and the rep's override |
 | [`test_narrate.py`](tests/test_narrate.py), [`test_server.py`](tests/test_server.py) | the web app: the step labels and the HTTP contract |
-| [`test_data.py`](tests/test_data.py), [`test_evaluate.py`](tests/test_evaluate.py), [`test_validate.py`](tests/test_validate.py) | the loader and the evaluation tools |
+| [`test_data.py`](tests/test_data.py), [`test_evaluate.py`](tests/test_evaluate.py), [`test_golden.py`](tests/test_golden.py), [`test_report.py`](tests/test_report.py), [`test_validate.py`](tests/test_validate.py) | the loader and the evaluation tools |
 
 ## Run it
 
@@ -72,6 +72,9 @@ python -m dispute_agent resume <thread> --route manual_escalation --reason "..."
 python -m dispute_agent resume <thread> --answer "the \$731.50 refund"     # need_more_evidence only, once
 python -m dispute_agent ask A-1002 "..." --approve                        # approve at the pause, no resume
 python -m dispute_agent eval --split dev --min-disputed-acc 0.75 --min-policy-recall 0.75 --min-route-acc 0.75
+python -m dispute_agent eval --split all                                  # one pass over all 16, the release capture
+python -m dispute_agent report runs/eval_<ts>.json --out dispute_agent/evaluation/reports/release_<date>.xlsx
+python -m dispute_agent.evaluation.golden --check                         # golden.xlsx still matches data/scenarios.xlsx
 python -m dispute_agent stability runs/eval_*.json --known S-11:route_ok
 python -m dispute_agent trace --last 12
 pytest
