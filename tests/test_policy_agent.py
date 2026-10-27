@@ -90,38 +90,20 @@ def test_citation_check(sections):
 
 
 def test_run_and_errors(ds, sections):
+    """It runs in parallel with the Account Agent: the complaint date, no account findings, no derived facts."""
     s = ds.scenarios["S-02"]
-    account, derived = facts(ds, s)
-
     good = FakeModel(PolicyReading(rules=[rule("LF.v3.s2", "explains_outcome")], summary="x"))
-    result = run_policy_agent(
-        sections, s.expected_category, s.rep_message, derived.policy_date, derived.policy_date_basis, account, derived, good
-    )
+    result = run_policy_agent(sections, s.expected_category, s.rep_message, WORLD_TODAY, model=good)
     assert good.calls == 1 and result.errors == [] and result.rules[0].section_id == "LF.v3.s2"
-    assert result.policy_date_basis == "disputed_event"
-
-    bad = FakeModel(RuntimeError("boom"))
-    result = run_policy_agent(
-        sections, s.expected_category, s.rep_message, derived.policy_date, derived.policy_date_basis, account, derived, bad
-    )
-    assert result.errors == ["interpret failed: RuntimeError: boom"]
-
-
-def test_run_without_facts(ds, sections):
-    """The parallel first run: the complaint date, no account findings, no derived facts."""
-    s = ds.scenarios["S-02"]
-    good = FakeModel(PolicyReading(rules=[rule("LF.v3.s2")], summary="x"))
-    result = run_policy_agent(sections, s.expected_category, s.rep_message, WORLD_TODAY, "complaint_date", model=good)
-    assert good.calls == 1 and result.errors == [] and result.policy_date_basis == "complaint_date"
     assert result.policy_date == WORLD_TODAY and set(s.expected_policy_ids) <= {r.section.section_id for r in result.retrieved}
 
-    seed = render_seed(s.expected_category, s.rep_message, result.retrieved, WORLD_TODAY, "complaint_date")
+    seed = render_seed(s.expected_category, s.rep_message, result.retrieved, WORLD_TODAY)
     assert f"Derived facts: {NO_FACTS_YET}" in seed and f"Evidence events: {NO_FACTS_YET}" in seed
     assert "Account summary: none" in seed and "Policy date: 2026-10-20 (complaint_date)" in seed
 
-    account, derived = facts(ds, s)
-    with_facts = render_seed(s.expected_category, s.rep_message, result.retrieved, derived.policy_date, "disputed_event", account, derived)
-    assert NO_FACTS_YET not in with_facts and "Policy date: 2026-10-14 (disputed_event)" in with_facts
+    bad = FakeModel(RuntimeError("boom"))
+    result = run_policy_agent(sections, s.expected_category, s.rep_message, WORLD_TODAY, model=bad)
+    assert result.errors == ["interpret failed: RuntimeError: boom"]
 
 
 def test_ambiguity_rule_is_narrow():

@@ -6,11 +6,9 @@ covers the dispute category. Anything that does not line up becomes an issue in 
 the cautious route the draft should lean to. The lean is a sentence shown to the LLM, never a route set by
 code: the LLM still chooses, and the evals catch it when it chooses wrong.
 
-Sync raises two flags the graph may act on, each at most once (docs/plans/orchestrator.md, O2): `account_missing`
-(the Account Agent's finalize failed) sends the Account Agent back for one more run; `policy_date_mismatch` (the
-Policy Agent read on the complaint date, but a different policy set was in force on the disputed event's date)
-re-runs the Policy Agent on that date. Nothing else is retried: a budget hit, missing policy or a dropped rule
-would come back the same.
+Nothing is retried. The Policy Agent ran in parallel, so it read on the complaint date; when a different policy set
+was in force on the disputed event's date (`policy_date_mismatch`), that is recorded and the draft leans to
+manual_escalation, like any other gap.
 """
 
 from __future__ import annotations
@@ -57,7 +55,7 @@ def sync(
         != {s.section_id for s in candidates(sections, category, on_policy)}
     )
 
-    # keep only rules whose section exists and was in force on policy_date; after a re-retrieve, a drop here is a bug
+    # keep only rules whose section exists and was in force on policy_date
     kept: list[RuleReading] = []
     dropped: list[str] = []
     drop_issues: list[str] = []
@@ -75,15 +73,14 @@ def sync(
 
     # issues in priority order; the lean is the first that applies, so missing policy wins over a budget hit
     detail = "; ".join(policy.errors) if policy and policy.errors else "no rules"
+    mismatch = f"policy read on {read_on}, but a different policy set was in force on {on_policy}"
     flags: list[tuple[bool, str, Route]] = [
         (policy_missing, f"policy findings missing: {detail}", "manual_escalation"),
         (not policy_missing and not category_covered, f"no kept rule covers {category}", "manual_escalation"),
+        (policy_date_mismatch, mismatch, "manual_escalation"),
         (account_missing, "account findings missing", "need_more_evidence"),
         (budget_hit, "account agent hit its tool budget", "need_more_evidence"),
     ]
-    mismatch_issues = (
-        [f"policy read on {read_on}, but a different policy set was in force on {on_policy}"] if policy_date_mismatch else []
-    )
     return SyncResult(
         rules=kept,
         dropped_section_ids=dropped,
@@ -92,6 +89,6 @@ def sync(
         policy_date_mismatch=policy_date_mismatch,
         budget_hit=budget_hit,
         category_covered=category_covered,
-        issues=[issue for hit, issue, _ in flags if hit] + mismatch_issues + drop_issues,
+        issues=[issue for hit, issue, _ in flags if hit] + drop_issues,
         lean=next((route for hit, _, route in flags if hit), None),
     )

@@ -6,7 +6,7 @@ recommended route, any open duplicate case, the draft and its open questions. Th
     approve   file the case under the recommended route
     override  file it under another route, with a reason
     answer    only when the route is need_more_evidence and no follow-up is used yet: the answer is added to the
-              complaint and the Account Agent looks again once (docs/plans/human-review.md, H1-H3)
+              complaint and the Account Agent looks again once (docs/history/human-review.md, H1-H3)
 
 The eval never pauses for a person: `orchestrator.run.investigate` answers every pause with `APPROVE`.
 """
@@ -31,8 +31,6 @@ class ReviewRequest(BaseModel):
     draft: dict[str, Any] | None  # None when synthesize failed
     open_questions: list[str]
     can_answer: bool  # route is need_more_evidence and the one follow-up is unused
-    account_attempts: int
-    policy_attempts: int
     followups: int
 
 
@@ -77,8 +75,6 @@ def build_request(s: dict[str, Any], label: str, max_followups: int, existing_ca
         draft=draft.model_dump(mode="json") if draft else None,
         open_questions=draft.open_questions if draft else [],
         can_answer=route == "need_more_evidence" and s["followups"] < max_followups,
-        account_attempts=s["account_attempts"],
-        policy_attempts=s["policy_attempts"],
         followups=s["followups"],
     )
 

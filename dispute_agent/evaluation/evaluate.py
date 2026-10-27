@@ -11,7 +11,7 @@ Table columns, left to right:
     cons                              policy-consistent: P1-P7 do not rule out the final route (needs no answer key)
     conf                              confidence consistent: never high on a cautious route; no draft fails
     devt / dpol                       the draft cites the required events and none forbidden / the required sections
-    traj                              trajectory: each agent ran at most twice, tool calls within budget
+    traj                              trajectory: the Account Agent's tool calls stayed within budget
     act                               action: a case was created, or the key's existing open case was returned instead
 After the totals: route accuracy and a confusion matrix of expected route (rows) by final route (columns).
 """
@@ -32,7 +32,7 @@ from dispute_agent.data import Dataset, Route, Scenario, load_dataset
 from dispute_agent.evaluation.golden import GOLDEN_PATH, PRODUCERS
 from dispute_agent.evaluation.metrics import grade, row_verdicts
 from dispute_agent.evaluation.policy_checks import ruled_out
-from dispute_agent.orchestrator.graph import MAX_ATTEMPTS, build_graph
+from dispute_agent.orchestrator.graph import build_graph
 from dispute_agent.orchestrator.run import Investigation, investigate
 from dispute_agent.policy_agent.retrieve import load_policies
 
@@ -104,7 +104,7 @@ def score(s: Scenario, inv: Investigation, ds: Dataset) -> dict[str, Any]:
         "draft_policy_ok": draft is not None and expected_policy <= set(draft.policy_source_ids),
         "synth_errors": inv.synthesis.errors,
         # the graph's shape and its one write
-        "trajectory_ok": max(inv.account_attempts, inv.policy_attempts) <= MAX_ATTEMPTS and account["tool_calls_made"] <= TOOL_BUDGET,
+        "trajectory_ok": account["tool_calls_made"] <= TOOL_BUDGET,
         "action_ok": inv.case.created is (s.expected_existing_case_id is None)
         and (s.expected_existing_case_id is None or inv.case.case_id == s.expected_existing_case_id),
     }
@@ -156,9 +156,6 @@ def run_eval(
     `producer` is the live agent by default; `golden_echo` and `empty_stub` (golden.py) score the key and an empty
     answer through the same path with no LLM, to prove the scorer itself before a model is graded.
     """
-    if os.environ.get("DISPUTE_FAULT"):
-        print("unset DISPUTE_FAULT before eval")
-        return 2
     ds = load_dataset(data_dir)
     sections = load_policies(Path(data_dir) / "policies")
     graph = build_graph(ds, sections, build_account_agent(ds)) if producer == "agent" else None
@@ -188,8 +185,7 @@ def run_eval(
         rows.append({
             "scenario_id": s.scenario_id, "split": s.split, "trap": s.trap, "wording": s.wording,
             "note_driven": s.note_driven, "category_pred": inv.category, "category_expected": s.expected_category,
-            "route_expected": s.expected_route, "account_attempts": inv.account_attempts,
-            "policy_attempts": inv.policy_attempts, "case": inv.case.model_dump(),
+            "route_expected": s.expected_route, "case": inv.case.model_dump(),
             "review": inv.review.model_dump(), "followups": inv.followups,
             "checks": checks,
             "findings": findings.model_dump() if findings else None,
@@ -202,11 +198,9 @@ def run_eval(
 
     scored = [r for r in rows if "checks" in r]
     failures = len(rows) - len(scored) + sum(r["findings"] is None for r in scored)  # exceptions + failed finalizes
-    send_backs = sum(r["account_attempts"] > 1 for r in scored)
-    re_retrieves = sum(r["policy_attempts"] > 1 for r in scored)
     totals = {k: sum(bool(r["checks"][k]) for r in scored) for k in CHECKS}
     per_check = "  ".join(f"{k}={v}/{len(scored)}" for k, v in totals.items())
-    print(f"\nscored {len(scored)}/{len(rows)}, {failures} failed, send-backs={send_backs}, re-retrieves={re_retrieves}; {per_check}")
+    print(f"\nscored {len(scored)}/{len(rows)}, {failures} failed; {per_check}")
     n = len(scored) or 1
     disputed_acc = totals["disputed_ok"] / n
     policy_recall = sum(bool(r["checks"]["policy_cited_ok"]) for r in scored) / n

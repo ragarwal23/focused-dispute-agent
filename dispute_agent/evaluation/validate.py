@@ -29,23 +29,7 @@ GOLDEN_OUTPUTS = (
 )
 
 NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "review"]  # a run pauses at review
-RESUME_HEAD = ["review", "account_agent_followup", "derive_states_followup", "sync"]  # a resume where the rep answered
-RESUME_TAIL = ["synthesize", "review"]
-
-
-def expected_children(account_attempts: int, policy_attempts: int) -> list[str]:
-    """The child-node sequence implied by the final graph state."""
-    head, tail = NORMAL[:5], NORMAL[5:]
-    if account_attempts == 2:
-        head += ["account_agent_retry", "derive_states_retry", "sync"]
-    if policy_attempts == 2:
-        head += ["policy_agent_retry", "sync"]
-    return head + tail
-
-
-def expected_resume_children(policy_retry: bool) -> list[str]:
-    """An answer-path resume: the Account Agent looks again, maybe a re-retrieve, then back to the pause."""
-    return RESUME_HEAD + (["policy_agent_retry", "sync"] if policy_retry else []) + RESUME_TAIL
+RESUME = ["review", "account_agent_followup", "derive_states_followup", "sync", "synthesize", "review"]  # the rep answered
 
 
 def stability(reports: list[dict], known: set[tuple[str, str]]) -> tuple[list[str], bool]:
@@ -66,11 +50,8 @@ def stability(reports: list[dict], known: set[tuple[str, str]]) -> tuple[list[st
             ok &= ignored or passed >= n - 1
         lines.append(f"{sid}: " + "  ".join(cells))
     for report in reports:
-        scored = [row for row in report.get("rows", []) if "checks" in row]
-        sends = sum(row.get("account_attempts", 0) > 1 for row in scored)
-        retries = sum(row.get("policy_attempts", 0) > 1 for row in scored)
         exceptions = sum("exception" in row for row in report.get("rows", []))
-        lines.append(f"{report.get('split', '?')}: send-backs={sends} re-retrieves={retries} exceptions={exceptions}")
+        lines.append(f"{report.get('split', '?')}: exceptions={exceptions}")
     return lines, ok
 
 
@@ -118,7 +99,7 @@ def trace_check(client: Any, project: str, last: int = 1, wait: float = 30.0) ->
         children.sort(key=lambda run: _value(run, "start_time") or datetime.min.replace(tzinfo=timezone.utc))
         actual = [_value(run, "name", "?") for run in children]
         outputs = _value(root, "outputs") or {}
-        if not isinstance(outputs, dict) or "account_attempts" not in outputs or "policy_attempts" not in outputs:
+        if not isinstance(outputs, dict) or "followups" not in outputs:
             lines.append(f"{_value(root, 'name')}: no outputs")
             ok = False
             continue
@@ -126,11 +107,10 @@ def trace_check(client: Any, project: str, last: int = 1, wait: float = 30.0) ->
             if not outputs.get("followups"):  # continued a crashed run: its shape depends on where it crashed
                 lines.append(f"{_value(root, 'name')}: recovery resume, shape not checked")
                 continue
-            options = [expected_resume_children(False), expected_resume_children(True)]
-            match = actual in options
-            expected = options[0]
+            expected = RESUME
+            match = actual == expected
         else:
-            expected = expected_children(int(outputs["account_attempts"]), int(outputs["policy_attempts"]))
+            expected = NORMAL
             match = _children_match(actual, expected)
         duration = _value(root, "end_time") and _value(root, "start_time")
         seconds = (_value(root, "end_time") - _value(root, "start_time")).total_seconds() if duration else 0

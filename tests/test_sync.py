@@ -14,7 +14,7 @@ def account_state(findings, budget_hit=False, errors=()):
 
 
 def policy_with(derived, category, *rules, errors=(), policy_date=None):
-    """Policy findings read on `policy_date` (default: the derived date, as after a re-retrieve)."""
+    """Policy findings read on `policy_date` (default: the derived date)."""
     return PolicyFindings(
         policy_date=policy_date or derived.policy_date, category=category, retrieved=[], rules=list(rules), errors=list(errors)
     )
@@ -42,7 +42,7 @@ def test_sync_policy_date_mismatch(ds, sections):
     # a disputed event from before LF.v3 took effect: the read on Oct 20 saw a different policy set
     old = derived.model_copy(update={"policy_date": datetime(2026, 4, 15)})
     r = sync(account_state(findings), same_set, old, s.expected_category, sections)
-    # the mismatch itself has no lean (a re-retrieve fixes it); but with every rule dropped, nothing covers the category
+    # recorded, not re-read; here every rule is also dropped, so nothing covers the category either
     assert r.policy_date_mismatch is True and r.rules == [] and r.category_covered is False
     assert r.issues == [
         "no kept rule covers late_fee_autopay",

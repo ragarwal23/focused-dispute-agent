@@ -1,7 +1,7 @@
 """create_review_case: the agent's only write, simulated. No LLM.
 
 Runs after the rep's review on every run, a missing draft included: the rep still needs a case, filed under the
-recommended route, or under the rep's route when they overrode it (docs/plans/human-review.md, H8).
+recommended route, or under the rep's route when they overrode it (docs/history/human-review.md, H8).
 Idempotent: `find_duplicate` looks for an open case with the same account, category and disputed event. When there
 is one, that case is returned and nothing is created; the review pause shows it to the rep first. Otherwise a new
 case ID is minted from the dataset's case count. Nothing is persisted, so the same complaint run twice mints the same

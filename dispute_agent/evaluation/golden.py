@@ -177,7 +177,7 @@ def key_findings(case: Scenario) -> AccountFindings:
 
 def investigation(
     ds: Dataset, sections: dict[str, PolicySection], case: Scenario, findings: AccountFindings | None,
-    draft: Draft | None, attempts: int = 1,
+    draft: Draft | None,
 ) -> Investigation:
     """An Investigation built from the answer key around the given findings and draft; code steps run for real."""
     account = {"findings": findings, "budget_hit": False, "tool_errors": [], "tool_calls_made": 2, "messages": []}
@@ -190,7 +190,7 @@ def investigation(
     synced = sync(account, policy, derived, case.expected_category, sections)
     synthesis = SynthesisResult(draft=draft, route=draft.review_route) if draft else SynthesisResult(errors=["no draft"])
     filed = create_review_case(ds, case.account_id, case.expected_category, derived, synthesis.route)
-    return Investigation(case.expected_category, account, derived, policy, synced, synthesis, filed, attempts)
+    return Investigation(case.expected_category, account, derived, policy, synced, synthesis, filed)
 
 
 def golden_echo(ds: Dataset, sections: dict[str, PolicySection], case: Scenario) -> Investigation:

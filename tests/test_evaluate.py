@@ -16,7 +16,7 @@ DATA = str(Path(__file__).resolve().parent.parent / "data")
 
 def test_score_failed_finalize_is_not_right(ds, sections):
     s = ds.scenarios["S-06"]
-    c = score(s, investigation(ds, sections, s, None, None, attempts=2), ds)
+    c = score(s, investigation(ds, sections, s, None, None), ds)
     model_checks = ("disputed_ok", "required_found", "forbidden_clear", "payment_ok", "refund_ok", "gap_ok", "oam_ok")
     assert not any(c[k] for k in model_checks)
     assert c["draft_route"] is None and c["route_final"] == "manual_escalation" and c["policy_consistent"] is True
@@ -66,14 +66,6 @@ def test_confusion_matrix():
     lines = confusion_lines(rows)
     assert len(lines) == 5 and lines[1].split() == ["adjustment_review", "1", "0", "0", "1"]
     assert lines[3].split() == ["need_more_evidence", "0", "0", "1", "0"]
-
-
-def test_eval_refuses_fault(ds, monkeypatch, tmp_path, capsys):
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("DISPUTE_FAULT", "finalize_once")
-    assert run_eval(DATA, "dev", None, 0.75, 0.75, 0.75) == 2
-    assert "unset DISPUTE_FAULT before eval" in capsys.readouterr().out
-    assert not (tmp_path / "runs").exists()
 
 
 def test_row_has_review(ds, sections, tmp_path, monkeypatch):

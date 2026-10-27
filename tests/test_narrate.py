@@ -58,16 +58,6 @@ def test_resume_to_case(ds, sections):
     assert all(e["type"] == "step" for e in events)
 
 
-def test_clarify_labels(ds, sections):
-    agent = FakeAccountAgent(account_state(None, errors=["finalize failed: x"]), account_state(oracle_findings(ds.scenarios["S-02"])))
-    _, events = start(ds, sections, "S-02", agent)
-    keys = starts(events)
-    assert keys.count("account_agent_retry") == 1 and keys.count("account_agent") == 1
-    labels = [e["label"] for e in events if e.get("key") == "account_agent_retry"]
-    assert labels == ["The account search came back empty; looking again (once)", "Account records read again (2 lookups)"]
-    assert "derive_states_retry" in keys and keys.count("sync") == 2
-
-
 def test_followup_labels(ds, sections):
     graph, first = start(ds, sections, "S-15", s15_agent(ds))
     assert first[-1]["type"] == "pause" and first[-1]["request"]["can_answer"] is True

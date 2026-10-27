@@ -38,8 +38,6 @@ class Investigation:
     sync: SyncResult
     synthesis: SynthesisResult
     case: CaseResult
-    account_attempts: int = 1  # 2 when sync sent the Account Agent back
-    policy_attempts: int = 1  # 2 when sync re-ran the Policy Agent on the disputed event's date
     review: ReviewDecision = field(default_factory=lambda: APPROVE)  # who filed the case: the rep's approval or override
     followups: int = 0  # 1 when the rep answered and the Account Agent looked again
     thread_id: str = ""
@@ -48,7 +46,7 @@ class Investigation:
     def from_state(cls, s: GraphState, thread_id: str = "") -> Investigation:
         return cls(
             s["category"], s["account"], s["derived"], s["policy"], s["sync"], s["synthesis"], s["case"],
-            s["account_attempts"], s["policy_attempts"], s["review"], s["followups"], thread_id,
+            s["review"], s["followups"], thread_id,
         )
 
 

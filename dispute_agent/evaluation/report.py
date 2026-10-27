@@ -26,9 +26,9 @@ from dispute_agent.evaluation.metrics import (
 RUN_KEYS = ("json_path", "captured_at", "model_id", "producer", "split", "scenarios", "exceptions", "golden_path", "judge_path", "before_path")
 CASE_COLS = [
     "#", "scenario_id", "split", "trap", "wording", "note_driven", "complaint", "golden_route", "actual_route",
-    "golden_disputed", "actual_disputed", "policy_consistent", "case_created", "attempts", "status",
+    "golden_disputed", "actual_disputed", "policy_consistent", "case_created", "status",
 ]
-MATRIX_COLS = ["Q", "Trap", "Wording", "Note", *AXES, "Grade", "Score", *JUDGE_AXES, "Judge mean", "P1-P7", "Attempts"]
+MATRIX_COLS = ["Q", "Trap", "Wording", "Note", *AXES, "Grade", "Score", *JUDGE_AXES, "Judge mean", "P1-P7"]
 LABEL_COLS = ["scenario_id", "trap", "complaint", "expected_route", "rationale", "actual_route", "case_note", "open_questions", *JUDGE_AXES, "notes"]
 FORBIDDEN_CITED = "forbidden_event_ids / cited anywhere by the Account Agent"
 FIELD_AXIS = {  # which axis governs each golden field's verdict cell
@@ -124,8 +124,7 @@ def run_detail(row: dict[str, Any]) -> list[tuple[str, Any]]:
     return [
         ("synth_errors", cell(checks.get("synth_errors"))), ("sync_issues", cell(sync.get("issues"))),
         ("account_summary", (row.get("findings") or {}).get("summary")), ("tool_calls_made", checks.get("tool_calls")),
-        ("tool_errors", cell(row.get("tool_errors"))), ("account_attempts", row.get("account_attempts")),
-        ("policy_attempts", row.get("policy_attempts")),
+        ("tool_errors", cell(row.get("tool_errors"))),
     ]
 
 
@@ -183,27 +182,26 @@ def write_scenario_sheet(wb: Workbook, case: Case, row: dict[str, Any] | None, j
 def case_row(n: int, case: Case, row: dict[str, Any] | None) -> list[Any]:
     base = [n, case.scenario_id, case.split, case.trap, case.wording, case.note_driven, case.rep_message[:80], case.expected_route]
     if row is None:
-        return base + [None, case.expected_disputed_event_id, None, None, None, None, "PENDING"]
+        return base + [None, case.expected_disputed_event_id, None, None, None, "PENDING"]
     if "exception" in row:
-        return base + [None, case.expected_disputed_event_id, None, None, None, None, "EXCEPTION"]
+        return base + [None, case.expected_disputed_event_id, None, None, None, "EXCEPTION"]
     filed = row.get("case") or {}
     return base + [
         (row.get("checks") or {}).get("route_final"), case.expected_disputed_event_id,
-        (row.get("findings") or {}).get("disputed_event_id"), consistent(row), yes(filed.get("created")),
-        f"a{row.get('account_attempts', '?')}/p{row.get('policy_attempts', '?')}", "OK",
+        (row.get("findings") or {}).get("disputed_event_id"), consistent(row), yes(filed.get("created")), "OK",
     ]
 
 
 def matrix_row(case: Case, row: dict[str, Any] | None, judge: dict[str, Any] | None) -> list[Any]:
     base = [case.scenario_id, case.trap, case.wording, yes(case.note_driven)]
     if row is None:
-        return base + [None] * len(AXES) + ["PENDING", None] + [None] * (len(JUDGE_AXES) + 3)
+        return base + [None] * len(AXES) + ["PENDING", None] + [None] * (len(JUDGE_AXES) + 2)
     verdicts = row_verdicts(row)
     scores = judge_scores(judge["rows"].get(case.scenario_id)) if judge else {a: None for a in JUDGE_AXES}
     judge_cells = [("ERR" if judge and s is None else s) for s in scores.values()]
     cons = "—" if "exception" in row else consistent(row)
     return base + [verdicts[a] for a in AXES] + [grade(verdicts), score_str(verdicts)] + judge_cells + [
-        judge_mean(scores) if judge else None, cons, f"a{row.get('account_attempts', '?')}/p{row.get('policy_attempts', '?')}",
+        judge_mean(scores) if judge else None, cons,
     ]
 
 
@@ -220,7 +218,7 @@ def write_matrix(wb: Workbook, cases: list[Case], rows: dict[str, dict[str, Any]
     mean = lambda v: round(sum(v) / len(v), 2) if v else None  # noqa: E731
     axis_means = [mean([j[axis] for j in judged if j[axis] is not None]) for axis in JUDGE_AXES]
     _append_header(ws, ["total", None, None, None] + ["%d/%d" % counts[a] for a in AXES] + ["%d/%d" % counts["grade"], None]
-                   + axis_means + [mean([m for m in map(judge_mean, judged) if m is not None]), None, None])
+                   + axis_means + [mean([m for m in map(judge_mean, judged) if m is not None]), None])
     ws.append([])
     _append_header(ws, ["expected \\ final route"])
     for line in confusion_lines([r for r in present if "checks" in r])[1:]:

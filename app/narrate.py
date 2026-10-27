@@ -1,7 +1,7 @@
 """narrate: the status key. Turns the graph's stream chunks into the plain-language steps the page shows. Pure, no I/O.
 
 The server streams the graph with stream_mode=["debug", "updates"], subgraphs=True, so every chunk is
-(namespace, mode, data). Shapes pinned on langgraph 1.2.17 (docs/plans/web-ui.md, Phase A spike):
+(namespace, mode, data). Shapes pinned on langgraph 1.2.17 (docs/history/web-ui.md, Phase A spike):
 
     debug    {"type": "task",        "payload": {"id", "name", "input", "triggers"}}             a node started
              {"type": "task_result", "payload": {"id", "name", "error", "result", "interrupts"}}  it finished
@@ -9,7 +9,7 @@ The server streams the graph with stream_mode=["debug", "updates"], subgraphs=Tr
     updates  {"__interrupt__": (Interrupt(value=<ReviewRequest json>),)}                        the review pause
 
 Namespace () is the parent graph; ("account_agent:<uuid>",) is the Account Agent's own loop (llm_call, tool_node,
-finalize), and the retry/follow-up runs arrive under their own node names. The tool_node task's input holds the
+finalize), and the follow-up run arrives under its own node names. The tool_node task's input holds the
 model's tool calls, so each tool gets its own line, with its real name, as soon as the node starts.
 Every step is owned by "ai" (an LLM call), "code" (plain Python) or "you" (the rep), the brief's split made visible.
 """
@@ -89,12 +89,6 @@ STEPS: dict[str, Step] = {
     "policy_agent": Step("ai", f"Finding the policy in force on {_day(WORLD_TODAY)} and reading it", _policy),
     "sync": Step("code", "Cross-checking the account findings against the policy",
                  lambda r: "Cross-check: " + ("; ".join(r["sync"].issues) or "no issues")),
-    "account_agent_retry": Step("ai", "The account search came back empty; looking again (once)",
-                                lambda r: f"Account records read again ({_lookups(r)})"),
-    "derive_states_retry": Step("code", "Working out the payment and refund status again", _states),
-    "policy_agent_retry": Step(
-        "ai", lambda i: f"A different policy was in force on {_day(i['derived'].policy_date)}; re-reading it (once)",
-        lambda r: f"Policy re-read on {_day(r['policy'].policy_date)}"),
     "synthesize": Step("ai", "Drafting the review case", lambda r: (
         f"Draft written: route {r['synthesis'].draft.review_route}" if r["synthesis"].draft else "The assistant could not write a draft")),
     "review": Step("you", "Waiting for your decision", _review),

@@ -68,7 +68,7 @@ def test_pause_payload_s02(ds, sections):
     r = out.request
     assert r.thread_label == "S-02" and r.route == "adjustment_review" and r.can_answer is False and r.existing_case_id is None
     assert not {"gate_rejected", "gate_reasons"} & set(r.model_dump())
-    assert r.draft["review_route"] == "adjustment_review" and (r.account_attempts, r.policy_attempts, r.followups) == (1, 1, 0)
+    assert r.draft["review_route"] == "adjustment_review" and r.followups == 0
     assert thread_status(graph, "t-s02") == "paused"
 
 
@@ -106,7 +106,7 @@ def test_answer_reruns_account_agent_once(ds, sections):
     order, final, agent, policy_model, _ = run(ds, sections, agent, "S-15", decisions=[ANSWER])
     assert order == NORMAL[:-1] + FOLLOWUP + ["create_review_case"]
     assert agent.calls == 2 and policy_model.calls == 1
-    assert final["followups"] == 1 and final["account_attempts"] == 2 and final["review"].action == "approve"
+    assert final["followups"] == 1 and final["review"].action == "approve"
     assert final["rep_message"].endswith("Rep follow-up (after review): " + ANSWER.answer) and final["rep_answer"] == ANSWER.answer
     assert final["derived"].disputed_event_id == "E-0138" and final["derived"].fact_ambiguous is False
 
@@ -127,12 +127,12 @@ def test_answer_refused_when_not_allowed(ds, sections):
     assert isinstance(out, Investigation) and out.case.route == "adjustment_review"
 
 
-def test_answer_then_clarify_bound(ds, sections):
-    """The follow-up's finalize fails: attempts are already at the bound, so sync does not send it back; the run reaches review."""
+def test_answer_then_finalize_fails(ds, sections):
+    """The follow-up's finalize fails: sync records it and the run goes back to review, no further look."""
     agent = s15_agent(ds, account_state(None, errors=["finalize failed: x"]))
     order, final, agent, *_ = run(ds, sections, agent, "S-15", decisions=[ANSWER])
     assert order == NORMAL[:-1] + FOLLOWUP + ["create_review_case"] and agent.calls == 2
-    assert final["sync"].account_missing is True and "account_agent_retry" not in order
+    assert final["sync"].account_missing is True and final["sync"].lean == "need_more_evidence"
 
 
 def test_sqlite_resume_across_savers(ds, sections, tmp_path, caplog):

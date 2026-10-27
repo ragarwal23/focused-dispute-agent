@@ -1,4 +1,4 @@
-// The server's payloads and events (docs/plans/web-ui.md §7), and the Server-Sent Events reader.
+// The server's payloads and events (docs/history/web-ui.md §7), and the Server-Sent Events reader.
 // EventSource is GET-only and a run needs a POST body, so the stream is read with fetch + ReadableStream.
 
 export type Owner = "ai" | "code" | "you";
@@ -24,7 +24,7 @@ export interface Draft {
 export interface ReviewRequest {
   thread_label: string; route: Route; existing_case_id: string | null;
   draft: Draft | null; open_questions: string[]; can_answer: boolean;
-  account_attempts: number; policy_attempts: number; followups: number;
+  followups: number;
 }
 export interface CaseResult {
   case_id: string; created: boolean; account_id: string; category: string; disputed_event_id: string | null; route: Route;

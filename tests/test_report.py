@@ -16,7 +16,6 @@ def normal_row(s):
     return {
         "scenario_id": s.scenario_id, "split": s.split, "trap": s.trap, "wording": s.wording, "note_driven": s.note_driven,
         "category_pred": s.expected_category, "category_expected": s.expected_category, "route_expected": s.expected_route,
-        "account_attempts": 1, "policy_attempts": 1,
         "case": {"case_id": "C-004", "created": True, "route": s.expected_route},
         "checks": {**ALL_OK, "tool_calls": 3, "route_final": s.expected_route, "draft_route": s.expected_route},
         "findings": {"relevant_event_ids": ["E-0081", "E-0117", "E-0120"], "disputed_event_id": "E-0117",
@@ -109,7 +108,7 @@ def test_sheets_and_titles(workbook, ds):
     assert t["tool_calls_made"] == (None, 3) and t["account_summary"] == (None, "cancelled autopay, fee stands")
     assert "thread_id" not in t  # the eval JSON never stores a thread ID (commit 372b170)
     cases = {r[1]: r for r in workbook["Cases"].iter_rows(min_row=2, values_only=True)}
-    assert cases["S-01"][7:] == ("explain_events", "explain_events", "E-0117", "E-0117", "ok", "yes", "a1/p1", "OK")
+    assert cases["S-01"][7:] == ("explain_events", "explain_events", "E-0117", "E-0117", "ok", "yes", "OK")
     assert cases["S-04"][2] == "heldout" and len(cases) == 16
 
 
@@ -122,7 +121,7 @@ def test_null_draft_row(workbook):
     v = verdicts(workbook["S-07"])
     assert v["route"] == "PARTIAL" and v["required_event_ids / cited_event_ids"] == "FAIL" and v["confidence"] == "FAIL"
     cases = {r[1]: r for r in workbook["Cases"].iter_rows(min_row=2, values_only=True)}
-    assert cases["S-07"][8] == "manual_escalation" and cases["S-07"][11:] == ("ok", "yes", "a1/p1", "OK")
+    assert cases["S-07"][8] == "manual_escalation" and cases["S-07"][11:] == ("ok", "yes", "OK")
 
 
 def test_exception_row(workbook, ds):

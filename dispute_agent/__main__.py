@@ -117,7 +117,7 @@ def _print_sections(v: dict[str, Any], quiet: bool) -> None:
     )
     print("\nderived (code):")
     print(json.dumps(derived_json(v["derived"]), indent=2))
-    print(f"\npolicy read on {policy.policy_date:%Y-%m-%d} ({policy.policy_date_basis}); retrieved (ranked):")
+    print(f"\npolicy read on {policy.policy_date:%Y-%m-%d} (complaint date); retrieved (ranked):")
     for r in policy.retrieved:
         s, via = r.section, f" via {r.via}" if r.via else ""
         print(f"{r.rank} {s.section_id} {r.score:.3f} {s.effective_from}→{s.effective_to or '-'}{via}")
@@ -127,7 +127,7 @@ def _print_sections(v: dict[str, Any], quiet: bool) -> None:
     print(f"policy errors={policy.errors} dropped={policy.dropped_section_ids}")
 
     issues = "; ".join(v["sync"].issues) or "no issues"
-    print(f"\nsync (code): {issues}  lean={v['sync'].lean}  account attempts: {v['account_attempts']}  policy attempts: {v['policy_attempts']}")
+    print(f"\nsync (code): {issues}  lean={v['sync'].lean}")
     print("\ndraft (LLM):")
     if v["synthesis"].draft:
         print(json.dumps(v["synthesis"].draft.model_dump(), indent=2))

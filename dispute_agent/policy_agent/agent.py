@@ -5,23 +5,18 @@
 2. Read (one LLM call): turn the retrieved sections into structured rules, each citing one section ID.
 3. Check citations (code): drop any rule citing a section that was not retrieved.
 
-It runs in parallel with the Account Agent, so its first run reads on the complaint date without the account's
-facts. If sync finds that a different policy set was in force on the disputed event's date, it runs once more on
-that date with the facts (docs/plans/orchestrator.md, O2).
+It runs in parallel with the Account Agent, so it reads on the complaint date without the account's facts. Sync
+then drops any rule whose section was not in force on the disputed event's date.
 """
 
 from __future__ import annotations
 
-import json
 from datetime import datetime
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from dispute_agent.account_agent.agent import AccountFindings
-from dispute_agent.account_agent.derive import DerivedFacts
-from dispute_agent.account_agent.tools import wrap_memo
 from dispute_agent.config import WORLD_TODAY, make_model
 from dispute_agent.data import Category
 from dispute_agent.policy_agent.retrieve import PolicySection, RetrievedSection, search_policy
@@ -57,7 +52,6 @@ class PolicyFindings(BaseModel):
     """What the Policy Agent reports back: what was retrieved, the rules that passed the citation check, errors."""
 
     policy_date: datetime
-    policy_date_basis: Literal["disputed_event", "complaint_date"] = "complaint_date"
     category: Category
     retrieved: list[RetrievedSection]
     rules: list[RuleReading] = []
@@ -78,30 +72,16 @@ def _render_section(r: RetrievedSection) -> str:
 NO_FACTS_YET = "none yet (the account investigation runs in parallel; read the policy on the complaint alone)"
 
 
-def render_seed(
-    category: Category,
-    rep_message: str,
-    retrieved: list[RetrievedSection],
-    policy_date: datetime,
-    policy_date_basis: str,
-    account: AccountFindings | None = None,
-    facts: DerivedFacts | None = None,
-) -> str:
-    """The user message for the LLM: the case facts (or `none yet` on the parallel first run), then every retrieved section."""
-    if facts is None:
-        derived_line, evidence_line = NO_FACTS_YET, NO_FACTS_YET
-    else:
-        evidence = [e.model_dump(mode="json") | {"memo": wrap_memo(e.memo)} for e in facts.evidence_events]
-        derived_line = json.dumps(facts.model_dump(mode="json", exclude={"evidence_events"}))
-        evidence_line = json.dumps(evidence)
+def render_seed(category: Category, rep_message: str, retrieved: list[RetrievedSection], policy_date: datetime) -> str:
+    """The user message for the LLM: the complaint (the account's facts are `none yet`), then every retrieved section."""
     return "\n".join([
         f"Category: {category}",
-        f"Policy date: {policy_date:%Y-%m-%d} ({policy_date_basis})",
+        f"Policy date: {policy_date:%Y-%m-%d} (complaint_date)",
         f"Complaint: {rep_message}",
-        f"Account summary: {account.summary if account else 'none'}",
-        f"Notes summary: {account.notes_summary if account else 'none'}",
-        f"Derived facts: {derived_line}",
-        f"Evidence events: {evidence_line}",
+        "Account summary: none",
+        "Notes summary: none",
+        f"Derived facts: {NO_FACTS_YET}",
+        f"Evidence events: {NO_FACTS_YET}",
         "",
         "Retrieved policy sections:",
         "\n\n".join(_render_section(r) for r in retrieved),
@@ -140,29 +120,23 @@ def run_policy_agent(
     category: Category,
     rep_message: str,
     policy_date: datetime,
-    policy_date_basis: Literal["disputed_event", "complaint_date"],
-    account: AccountFindings | None = None,
-    facts: DerivedFacts | None = None,
     model: Any = None,
     config: dict | None = None,
 ) -> PolicyFindings:
-    """Search, read, check. Failures are recorded in `errors`, never raised.
-
-    The first run passes the complaint date and no facts; the re-retrieve passes the disputed event's date and the facts.
-    """
+    """Search, read, check. Failures are recorded in `errors`, never raised."""
     try:
         retrieved = search_policy(sections, category, policy_date, rep_message)
     except Exception as exc:
         return PolicyFindings(
-            policy_date=policy_date, policy_date_basis=policy_date_basis, category=category, retrieved=[],
+            policy_date=policy_date, category=category, retrieved=[],
             errors=[f"retrieve failed: {type(exc).__name__}: {exc}"],
         )
-    result = PolicyFindings(policy_date=policy_date, policy_date_basis=policy_date_basis, category=category, retrieved=retrieved)
+    result = PolicyFindings(policy_date=policy_date, category=category, retrieved=retrieved)
     if not retrieved:
         result.errors = [f"found nothing useful: no policy sections in force for {category} on {policy_date:%Y-%m-%d}"]
         return result
     try:
-        seed = render_seed(category, rep_message, retrieved, policy_date, policy_date_basis, account, facts)
+        seed = render_seed(category, rep_message, retrieved, policy_date)
         reading = interpret(seed, model, config)
     except Exception as exc:
         result.errors = [f"interpret failed: {type(exc).__name__}: {exc}"]
