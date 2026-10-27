@@ -165,6 +165,13 @@ Cost: 36 live scenario runs at the previously observed $0.05–0.07 each, about 
 - **The `route` axis keeps a PARTIAL.** A route that is right only because there was no draft scores PARTIAL, as
   "right only because the gate rejected" did before, so an empty answer still cannot score a clean PASS on the
   `manual_escalation` scenarios (`empty_stub` grades FAIL on all 16).
-- **Trace shapes.** The graph now has one node fewer (`... > sync > synthesize > review`). `trace --last 12`, run
-  minutes after the passes, saw only the first five new roots: LangSmith had not yet ingested the later runs. Those five
-  matched the new shape; the other seven were older gate-era roots and reported the expected mismatch.
+- **Trace shapes, and a LangSmith quota.** The graph now has one node fewer (`... > sync > synthesize > review`).
+  Only the first five scenarios of pass T182359Z reached LangSmith: from S-07 on, every upload was refused with
+  `429 ... tenant exceeded usage limits: Monthly unique traces usage limit exceeded` (32, 56 and 57 refusals in the three
+  logs). The eval itself is unaffected (scores are computed locally and written to `runs/`), but those traces are lost.
+  `trace --last 12` matched all five new roots it could see; the other seven it picked up were gate-era roots and
+  reported the expected mismatch. After the limit was raised, a fourth dev pass (`runs/eval_20261027T202122Z.json`,
+  exit 0) uploaded with no refusals and scored the same as the three above: route 11/12 (S-11), every other check
+  12/12, grade PASS 11/12. `trace --last 12` then passed: all twelve roots had the seven-child shape
+  `classify > account_agent > policy_agent > derive_states > sync > synthesize > review`, at 13.0–21.7 s and
+  $0.0518–$0.0719 each ($0.76 total).
