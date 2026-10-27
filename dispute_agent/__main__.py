@@ -257,7 +257,7 @@ def main(argv: list[str] | None = None) -> int:
     decide.add_argument("--answer", help="answer the open questions; the Account Agent looks again once")
     res.add_argument("--reason", help="why the route was overridden")
     ev = sub.add_parser("eval", help="run and score scenarios")
-    ev.add_argument("--split", default="dev", choices=["dev", "heldout"])
+    ev.add_argument("--split", default="dev", choices=["dev", "heldout", "all"])
     ev.add_argument("--scenario", help="one scenario ID, e.g. S-01")
     ev.add_argument("--min-disputed-acc", type=float, default=0.0)
     ev.add_argument("--min-policy-recall", type=float, default=0.0)

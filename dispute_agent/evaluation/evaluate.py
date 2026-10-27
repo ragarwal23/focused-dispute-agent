@@ -27,8 +27,9 @@ from typing import Any
 
 from dispute_agent.account_agent.agent import build_account_agent
 from dispute_agent.account_agent.derive import derive_states, derived_json
-from dispute_agent.config import TOOL_BUDGET
+from dispute_agent.config import MODEL_ID, TOOL_BUDGET
 from dispute_agent.data import Dataset, Route, Scenario, load_dataset
+from dispute_agent.evaluation.golden import GOLDEN_PATH
 from dispute_agent.orchestrator.graph import MAX_ATTEMPTS, build_graph
 from dispute_agent.orchestrator.run import Investigation, investigate
 from dispute_agent.policy_agent.retrieve import load_policies
@@ -133,6 +134,13 @@ def confusion_lines(scored: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def select_scenarios(ds: Dataset, split: str, scenario_id: str | None) -> list[Scenario]:
+    """One scenario by ID, else the split; `all` is dev and held-out together (the one held-out pass)."""
+    if scenario_id:
+        return [s for s in ds.scenarios.values() if s.scenario_id == scenario_id]
+    return [s for s in ds.scenarios.values() if split == "all" or s.split == split]
+
+
 def run_eval(
     data_dir: str,
     split: str,
@@ -148,10 +156,7 @@ def run_eval(
     ds = load_dataset(data_dir)
     sections = load_policies(Path(data_dir) / "policies")
     graph = build_graph(ds, sections, build_account_agent(ds))
-    if scenario_id:
-        scenarios = [s for s in ds.scenarios.values() if s.scenario_id == scenario_id]
-    else:
-        scenarios = [s for s in ds.scenarios.values() if s.split == split]
+    scenarios = select_scenarios(ds, split, scenario_id)
     if os.getenv("LANGSMITH_TRACING", "").lower() == "true":
         print(f"tracing to LangSmith project: {os.getenv('LANGSMITH_PROJECT', 'default')}")
     print(HEADER)
@@ -201,7 +206,10 @@ def run_eval(
 
     out_path = Path("runs") / f"eval_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
     out_path.parent.mkdir(exist_ok=True)
-    report = {"category_source": "classify", "split": split, "rows": rows, "totals": totals}
+    report = {
+        "category_source": "classify", "split": split, "model_id": MODEL_ID, "golden_path": GOLDEN_PATH,
+        "rows": rows, "totals": totals,
+    }
     out_path.write_text(json.dumps(report, indent=2, default=str))
     print(
         f"disputed-event accuracy {disputed_acc:.2f} (min {min_disputed_acc}); "
