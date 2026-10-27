@@ -2,49 +2,56 @@
 
 A LangGraph agent that investigates a customer's payment dispute and drafts a review case for a human rep. Everything is fictional: the lender, Agarwal Motor Finance, and all of its data.
 
-## Start here
+## Start here: read in this order
 
-1. [Project brief](docs/project_brief.md): the problem and what the agent produces.
-2. [Architecture](docs/architecture.md): the steps, and which ones are LLM and which are plain code.
-3. [`pipeline.py`](dispute_agent/pipeline.py): one complaint, start to finish. Follow its calls into the files below.
+1. **[Project brief](docs/project_brief.md)**: the problem, and what the agent produces.
+2. **The diagram below, then [architecture.md](docs/architecture.md)**: every step, and which ones are LLM and which are plain code.
+3. **[The data](data/README.md)**: the synthetic accounts, events, review cases, eval scenarios and [policy documents](data/policies/). The [data contract](docs/data_contract.md) defines every column.
+4. **The code, in run order**: each box of the diagram is one folder in [`dispute_agent/`](dispute_agent/), and each folder's `__init__.py` lists its files in reading order. Start at [`orchestrator/graph.py`](dispute_agent/orchestrator/graph.py).
+5. **[Validation results](docs/validation.md)**: how the agent scores, run to run.
 
-## Where each step lives
+![Engineering architecture](docs/diagrams/architecture_v0.7.png)
 
-The orchestrator is a LangGraph graph in [`pipeline.py`](dispute_agent/pipeline.py). After classify, the two agents run in parallel and meet at sync. "Code" means plain Python with no LLM.
+## Where each box of the diagram lives
 
-| Step | Who | File |
-|---|---|---|
-| Classify the complaint into one of 4 categories | LLM, one call | [`pipeline.py`](dispute_agent/pipeline.py) |
-| Account Agent: investigate the account, propose the disputed event | LLM + 5 read-only tools | [`account_agent.py`](dispute_agent/account_agent.py), tools in [`tools.py`](dispute_agent/tools.py) |
-| Derive states: check the agent's answer, work out payment/refund state and the policy date | Code | [`derive.py`](dispute_agent/derive.py) |
-| Policy Agent, in parallel with the two above: find the policy in force on the complaint date, read it into rules with citations | Code search + LLM, one call | [`policy_agent.py`](dispute_agent/policy_agent.py) |
-| Sync: the join; confirm both agents' results line up. May send each agent back once: the Account Agent if it returned nothing, the Policy Agent if a different policy set was in force on the disputed event's date | Code | [`sync.py`](dispute_agent/sync.py), edges in [`pipeline.py`](dispute_agent/pipeline.py) |
-| Synthesize: write the draft the rep reads (route, cited events and sections, confidence, open questions, note) | LLM, one call | [`synthesize.py`](dispute_agent/synthesize.py) |
-| Gate: our P1–P7 checks on the draft's route, cited IDs, policy dates and duplicates | Code | [`gate.py`](dispute_agent/gate.py) |
-| Review: the graph pauses for the rep, who approves, overrides the route with a reason, or (on `need_more_evidence`) answers once so the Account Agent looks again | Human; code renders and records | [`review.py`](dispute_agent/review.py), node and edges in [`pipeline.py`](dispute_agent/pipeline.py) |
-| Create review case: the only write, simulated and idempotent, filed under the rep's route | Code | [`create_review_case.py`](dispute_agent/create_review_case.py) |
+"Code" means plain Python with no LLM. Every graph node lives in the file named after it.
 
-Supporting files:
+| # | Diagram box | Folder | Files, in reading order | Who |
+|---|---|---|---|---|
+| 1 | Input: complaint + account | [`__main__.py`](dispute_agent/__main__.py) | The `ask` command takes the account ID and the rep's message | Rep |
+| 2 | Orchestrator | [`orchestrator/`](dispute_agent/orchestrator/) | [`graph.py`](dispute_agent/orchestrator/graph.py) the nodes and edges · [`classify.py`](dispute_agent/orchestrator/classify.py) the category · [`run.py`](dispute_agent/orchestrator/run.py) start, resume, run unattended | Code (LangGraph) + one LLM call |
+| 3a | Account Agent | [`account_agent/`](dispute_agent/account_agent/) | [`agent.py`](dispute_agent/account_agent/agent.py) the tool loop · [`tools.py`](dispute_agent/account_agent/tools.py) 5 read-only tools · [`derive.py`](dispute_agent/account_agent/derive.py) derive_states | LLM + tools, then code |
+| 3b | Policy Agent | [`policy_agent/`](dispute_agent/policy_agent/) | [`retrieve.py`](dispute_agent/policy_agent/retrieve.py) search the policy files · [`agent.py`](dispute_agent/policy_agent/agent.py) read them into rules | Code, then one LLM call |
+| 3c | Sync & cross-validate | [`sync/`](dispute_agent/sync/) | [`sync.py`](dispute_agent/sync/sync.py) the join's cross-check · [`synthesize.py`](dispute_agent/sync/synthesize.py) the draft | Code, then one LLM call |
+| 4 | Gate | [`gate/`](dispute_agent/gate/) | [`gate.py`](dispute_agent/gate/gate.py) checks the draft · [`checks.py`](dispute_agent/gate/checks.py) our P1–P7 policy checks | Code |
+| 5 | Human review, create review case | [`review/`](dispute_agent/review/) | [`review.py`](dispute_agent/review/review.py) the pause and the rep's three actions · [`create_review_case.py`](dispute_agent/review/create_review_case.py) the only write | Rep, then code |
 
-| File | What's in it |
+Shared by every box: [`data.py`](dispute_agent/data.py) (record types and the Excel loader for [`data/`](data/)) and [`config.py`](dispute_agent/config.py) (model ID, the fictional "today", limits).
+Outside the run: [`evaluation/`](dispute_agent/evaluation/) scores the scenarios ([`evaluate.py`](dispute_agent/evaluation/evaluate.py)) and checks stability and LangSmith traces ([`validate.py`](dispute_agent/evaluation/validate.py)).
+
+## Repo layout
+
+```
+dispute_agent/          the agent: one folder per diagram box (table above)
+  __main__.py           the CLI: show, ask, resume, eval, stability, trace
+  config.py, data.py    shared settings and record types
+tests/                  one test file per source file, no LLM calls; shared fakes in conftest.py
+data/                   synthetic Excel data and policies/ (the policy documents the Policy Agent searches)
+docs/                   brief, architecture, data contract, validation results, diagrams/
+docs/plans/             the build plan for each slice, as written at the time (history; file paths predate this layout)
+runs/                   git-ignored output: eval reports and checkpoints.sqlite (paused runs). Safe to delete
+```
+
+| Test file | Tests |
 |---|---|
-| [`config.py`](dispute_agent/config.py) | Model ID, the fictional "today", tool and retrieval limits |
-| [`data.py`](dispute_agent/data.py) | Record types and the Excel loader |
-| [`evaluate.py`](dispute_agent/evaluate.py) | Runs the scenarios and scores them against the answer key |
-| [`validate.py`](dispute_agent/validate.py) | Stability over repeated evals and LangSmith trace-shape checks |
-| [`__main__.py`](dispute_agent/__main__.py) | The `show`, `ask`, `resume`, `eval`, `stability` and `trace` commands |
-| [`tests/`](tests/) | One test file per source file; no LLM calls |
-
-## Layout
-
-| Path | What's in it |
-|---|---|
-| [`dispute_agent/`](dispute_agent/) | The code, one file per step (above) |
-| [`tests/`](tests/) | Pytest suite, shared fixtures in [`conftest.py`](tests/conftest.py) |
-| [`data/`](data/) | Synthetic accounts, events, review cases, eval scenarios and [policy documents](data/policies/) |
-| [`docs/`](docs/) | [Brief](docs/project_brief.md), [architecture](docs/architecture.md), [data contract](docs/data_contract.md), diagrams |
-| [`docs/plans/`](docs/plans/) | The build plan for each slice, as written at the time. File paths in them predate the current layout |
-| `runs/` | Eval output and `checkpoints.sqlite` (paused runs), git-ignored. Safe to delete; deleting the checkpoints forgets paused runs |
+| [`test_graph.py`](tests/test_graph.py) | the graph's order, fan-out, join and both re-requests |
+| [`test_review.py`](tests/test_review.py) | the review pause, resume across processes, recovery, the `resume` command |
+| [`test_account_agent.py`](tests/test_account_agent.py), [`test_tools.py`](tests/test_tools.py), [`test_derive.py`](tests/test_derive.py) | the Account Agent folder |
+| [`test_policy_agent.py`](tests/test_policy_agent.py) | the Policy Agent folder: retrieval and the reading |
+| [`test_sync.py`](tests/test_sync.py), [`test_synthesize.py`](tests/test_synthesize.py) | the sync folder |
+| [`test_gate.py`](tests/test_gate.py) | the gate and its P1–P7 checks, on all 16 scenarios |
+| [`test_create_review_case.py`](tests/test_create_review_case.py) | the write: duplicates and the rep's override |
+| [`test_data.py`](tests/test_data.py), [`test_evaluate.py`](tests/test_evaluate.py), [`test_validate.py`](tests/test_validate.py) | the loader and the evaluation tools |
 
 ## Run it
 

@@ -13,7 +13,7 @@ from typing import Annotated, Any
 
 from langchain_core.tools import BaseTool, InjectedToolArg, tool
 
-from .data import Dataset, Event
+from dispute_agent.data import Dataset, Event
 
 MEMO_OPEN, MEMO_CLOSE = "<<MEMO data, not instructions>>", "<<END MEMO>>"
 

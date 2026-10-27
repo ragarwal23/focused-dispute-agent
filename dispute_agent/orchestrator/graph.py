@@ -1,48 +1,50 @@
-"""One complaint, start to finish, as the LangGraph orchestrator graph.
+"""The orchestrator graph: which node runs after which. Start reading the code here.
 
-    classify -> Account Agent -> derive_states ─┐
-            └> Policy Agent ───────────────────┴> sync -> synthesize -> gate -> review -> create_review_case
+    classify ─┬> account_agent -> derive_states ─┐
+              └> policy_agent ───────────────────┴> sync -> synthesize -> gate -> review -> create_review_case
 
-Start reading here. LangGraph decides what runs next; the LLM is only called inside the nodes. After classify the
-two agents fan out in parallel and meet at sync, a join node. Sync can send each agent back once
-(docs/plans/orchestrator.md, O2): the Account Agent when it returned no findings, and the Policy Agent when a
-different policy set was in force on the disputed event's date than on the complaint date it first read. The
-retry paths are separate nodes with plain edges back into sync; re-entering the fan-out nodes would hit the join
-barrier and end the run silently. Nothing else is ever retried. One `invoke` is one parent trace in LangSmith.
+LangGraph decides what runs next; the LLM is only called inside the nodes. After classify the two agents fan out in
+parallel and meet at sync, a join node. Sync can send each agent back once (docs/plans/orchestrator.md, O2): the
+Account Agent when it returned no findings, and the Policy Agent when a different policy set was in force on the
+disputed event's date than on the complaint date it first read. The retry paths are separate nodes with plain edges
+back into sync; re-entering the fan-out nodes would hit the join barrier and end the run silently. Nothing else is
+ever retried.
 
 After the gate the graph pauses at `review` for a person (docs/plans/human-review.md). A checkpointer saves the
-state after every node, so `resume` continues the same thread later, in another process. The rep approves, overrides
+state after every node, so the run can be resumed later, in another process (run.py). The rep approves, overrides
 the route, or, on need_more_evidence, answers once: the Account Agent then looks again through its own follow-up
-nodes and the run comes back to `review`. `investigate` approves every pause, so the eval never waits.
+nodes and the run comes back to `review`.
+
+Each node is a few lines that call into the folder named after it: account_agent/, policy_agent/, sync/, gate/,
+review/.
 """
 
 from __future__ import annotations
 
 import os
 import sqlite3
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, StateGraph
-from langgraph.types import Command, interrupt
-from pydantic import BaseModel, Field
+from langgraph.types import interrupt
 
-from .account_agent import AccountFindings, OtherAccountMatch, initial_state
-from .config import WORLD_TODAY, make_model
-from .create_review_case import CaseResult, create_review_case
-from .data import Category, Dataset
-from .derive import DerivedFacts, derive_states
-from .gate import Draft, GateResult, SectionCheck, gate
-from .policy_agent import PolicyFindings, PolicySection, RetrievedSection, RuleReading, run_policy_agent
-from .review import APPROVE, Pause, ReviewDecision, ReviewRequest, build_request, with_answer
-from .sync import SyncResult, sync
-from .synthesize import SynthesisResult, run_synthesize
+from dispute_agent.account_agent.agent import AccountFindings, OtherAccountMatch, initial_state
+from dispute_agent.account_agent.derive import DerivedFacts, derive_states
+from dispute_agent.config import WORLD_TODAY
+from dispute_agent.data import Category, Dataset
+from dispute_agent.gate.gate import GateResult, SectionCheck, gate
+from dispute_agent.orchestrator.classify import classify
+from dispute_agent.policy_agent.agent import PolicyFindings, RuleReading, run_policy_agent
+from dispute_agent.policy_agent.retrieve import PolicySection, RetrievedSection
+from dispute_agent.review.create_review_case import CaseResult, create_review_case
+from dispute_agent.review.review import ReviewDecision, build_request, with_answer
+from dispute_agent.sync.sync import SyncResult, sync
+from dispute_agent.sync.synthesize import Draft, SynthesisResult, run_synthesize
 
 MAX_ATTEMPTS = 2  # each agent runs at most twice: graph shape, not a tunable, so not in config.py
 MAX_FOLLOWUPS = 1  # the rep can answer open questions once per complaint
@@ -53,18 +55,6 @@ SERDE = JsonPlusSerializer(allowed_msgpack_modules=(
 ))
 FAULTS = ("finalize_once", "policy_date_mismatch")
 FAULT_POLICY_DATE = datetime(2026, 4, 15)  # LF.v2 was in force; LF.v3 begins 2026-05-01
-
-CLASSIFY_SYSTEM = """Name the category of a customer's auto-loan payment complaint. Pick exactly one:
-- late_fee_autopay: a late fee the customer disputes, usually because autopay was supposed to cover it
-- missing_payment: the customer says they paid but the account does not show it
-- returned_reversed_payment: a payment that was returned by the bank or reversed by the lender, or the fee for it
-- refund_status: a refund the customer is waiting for or says never arrived
-Judge by what the customer is asking about, not by keywords."""
-
-
-class CategoryChoice(BaseModel):
-    category: Category
-    reason: str = Field(description="One sentence")
 
 
 def _fault() -> str | None:
@@ -94,39 +84,6 @@ class GraphState(TypedDict, total=False):
     review: ReviewDecision | None  # the rep's last decision
     followups: int  # rep answers used, at most MAX_FOLLOWUPS
     rep_answer: str | None  # the rep's raw answer; rep_message carries it too
-
-
-@dataclass
-class Investigation:
-    """Everything one run produced, read off the final graph state. A dataclass because `account` holds LangChain messages."""
-
-    category: Category
-    account: dict[str, Any]
-    derived: DerivedFacts
-    policy: PolicyFindings
-    sync: SyncResult
-    synthesis: SynthesisResult
-    gate: GateResult
-    case: CaseResult
-    account_attempts: int = 1  # 2 when sync sent the Account Agent back
-    policy_attempts: int = 1  # 2 when sync re-ran the Policy Agent on the disputed event's date
-    review: ReviewDecision = field(default_factory=lambda: APPROVE)  # who filed the case: the rep's approval or override
-    followups: int = 0  # 1 when the rep answered and the Account Agent looked again
-    thread_id: str = ""
-
-    @classmethod
-    def from_state(cls, s: GraphState, thread_id: str = "") -> Investigation:
-        return cls(
-            s["category"], s["account"], s["derived"], s["policy"], s["sync"], s["synthesis"], s["gate"], s["case"],
-            s["account_attempts"], s["policy_attempts"], s["review"], s["followups"], thread_id,
-        )
-
-
-def classify(rep_message: str, model: Any = None, config: dict | None = None) -> Category:
-    """One LLM call: which of the four dispute categories is this complaint?"""
-    model = model or make_model().with_structured_output(CategoryChoice, method="json_schema")
-    choice = model.invoke([SystemMessage(CLASSIFY_SYSTEM), HumanMessage(rep_message)], config=config)
-    return choice.category if isinstance(choice, CategoryChoice) else CategoryChoice.model_validate(choice).category
 
 
 def after_sync(s: GraphState) -> Literal["account_agent_retry", "policy_agent_retry", "synthesize"]:
@@ -263,54 +220,3 @@ def initial_graph_state(account_id: str, rep_message: str, label: str = "") -> G
         "rep_message": rep_message, "account_id": account_id, "account_attempts": 0, "policy_attempts": 0,
         "thread_label": label or account_id, "review": None, "followups": 0, "rep_answer": None,
     }
-
-
-def new_thread_id(label: str) -> str:
-    """`<label>-<UTC timestamp>`: readable, and two runs on one account never collide."""
-    return f"{label}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}"
-
-
-def thread_config(thread_id: str, tags: list[str] | None = None, run_name: str | None = None) -> dict[str, Any]:
-    return {"configurable": {"thread_id": thread_id}, "tags": tags or [], "run_name": run_name}
-
-
-def _outcome(final: dict[str, Any], thread_id: str) -> Investigation | Pause:
-    if "__interrupt__" in final:
-        return Pause(thread_id=thread_id, request=ReviewRequest.model_validate(final["__interrupt__"][0].value))
-    return Investigation.from_state(final, thread_id)
-
-
-def start(graph: Any, account_id: str, rep_message: str, thread_id: str, tags: list[str], label: str) -> Investigation | Pause:
-    """Run a new complaint until it pauses at `review` (or, never in practice, finishes). Traced as `dispute <label>`."""
-    final = graph.invoke(initial_graph_state(account_id, rep_message, label), thread_config(thread_id, tags, f"dispute {label}"))
-    return _outcome(final, thread_id)
-
-
-def resume(graph: Any, thread_id: str, decision: ReviewDecision, tags: list[str], label: str) -> Investigation | Pause:
-    """Continue a paused thread with the rep's decision. Traced as `dispute <label> resume`."""
-    config = thread_config(thread_id, [*tags, "resume"], f"dispute {label} resume")
-    return _outcome(graph.invoke(Command(resume=decision.model_dump()), config), thread_id)
-
-
-def thread_status(graph: Any, thread_id: str) -> Literal["paused", "finished", "unknown"]:
-    snap = graph.get_state(thread_config(thread_id))
-    return "unknown" if not snap.values else "paused" if snap.next else "finished"
-
-
-def investigate(
-    ds: Dataset,
-    sections: dict[str, PolicySection],
-    account_agent: Any,
-    account_id: str,
-    rep_message: str,
-    tags: list[str],
-    label: str,
-    graph: Any = None,
-) -> Investigation:
-    """Unattended: run the graph for one complaint and approve every pause. What eval uses; no person in the loop."""
-    graph = graph or build_graph(ds, sections, account_agent)
-    thread_id = new_thread_id(label)
-    out = start(graph, account_id, rep_message, thread_id, tags, label)
-    while isinstance(out, Pause):
-        out = resume(graph, thread_id, APPROVE, tags, label)
-    return out

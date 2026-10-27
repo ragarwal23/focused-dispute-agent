@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
+from dispute_agent.account_agent.tools import make_tools
 from dispute_agent.data import load_dataset
-from dispute_agent.policy_agent import load_policies
-from dispute_agent.tools import make_tools
+from dispute_agent.policy_agent.retrieve import load_policies
 
 DATA = Path(__file__).resolve().parent.parent / "data"
 

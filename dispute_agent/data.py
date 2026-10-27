@@ -1,7 +1,7 @@
 """The records (accounts, events, review cases, scenarios) and the Excel loader.
 
 The shapes follow docs/data_contract.md exactly; a workbook with a wrong header fails to load.
-The agent never reads this directly: it goes through the tools in tools.py.
+The agent never reads this directly: it goes through the tools in account_agent/tools.py.
 """
 
 from __future__ import annotations

@@ -12,9 +12,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from .account_agent import AccountFindings
-from .config import WORLD_TODAY
-from .data import PAYMENT_TYPES, REFUND_TYPES, Category, Dataset, Event, PaymentState, RefundState
+from dispute_agent.account_agent.agent import AccountFindings
+from dispute_agent.config import WORLD_TODAY
+from dispute_agent.data import PAYMENT_TYPES, REFUND_TYPES, Category, Dataset, Event, PaymentState, RefundState
 
 
 class DerivedFacts(BaseModel):

@@ -18,16 +18,15 @@ from typing import Any, get_args
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from .account_agent import build_account_agent
-from .data import Route, load_dataset
-from .derive import derived_json
-from .evaluate import run_eval
-from .pipeline import (
-    Investigation, build_graph, new_thread_id, resume, sqlite_checkpointer, start, thread_config, thread_status,
-)
-from .policy_agent import load_policies
-from .review import APPROVE, Pause, ReviewDecision
-from .validate import stability, trace_check
+from dispute_agent.account_agent.agent import build_account_agent
+from dispute_agent.account_agent.derive import derived_json
+from dispute_agent.data import Route, load_dataset
+from dispute_agent.evaluation.evaluate import run_eval
+from dispute_agent.evaluation.validate import stability, trace_check
+from dispute_agent.orchestrator.graph import build_graph, sqlite_checkpointer
+from dispute_agent.orchestrator.run import Investigation, new_thread_id, resume, start, thread_config, thread_status
+from dispute_agent.policy_agent.retrieve import load_policies
+from dispute_agent.review.review import APPROVE, Pause, ReviewDecision
 
 CHECKPOINTS = Path("runs") / "checkpoints.sqlite"  # paused runs; delete it to forget them
 TAGS = ["slice=investigate", "cli"]

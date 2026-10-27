@@ -8,7 +8,7 @@ the gate's verdict, the draft and its open questions. The rep answers with a `Re
     answer    only when the route is need_more_evidence and no follow-up is used yet: the answer is added to the
               complaint and the Account Agent looks again once (docs/plans/human-review.md, H1-H3)
 
-The eval never pauses for a person: `pipeline.investigate` answers every pause with `APPROVE`.
+The eval never pauses for a person: `orchestrator.run.investigate` answers every pause with `APPROVE`.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, model_validator
 
-from .data import Route
+from dispute_agent.data import Route
 
 Action = Literal["approve", "override", "answer"]
 

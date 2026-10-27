@@ -3,15 +3,16 @@
 import json
 from pathlib import Path
 
-from dispute_agent.evaluate import run_eval
+from dispute_agent.evaluation.evaluate import run_eval
 
-from dispute_agent.create_review_case import create_review_case
-from dispute_agent.derive import derive_states
-from dispute_agent.evaluate import CHECKS, HEADER, confusion_lines, row_line, score
-from dispute_agent.gate import Draft, gate
-from dispute_agent.pipeline import Investigation
-from dispute_agent.sync import sync
-from dispute_agent.synthesize import SynthesisResult
+from dispute_agent.account_agent.derive import derive_states
+from dispute_agent.evaluation.evaluate import CHECKS, HEADER, confusion_lines, row_line, score
+from dispute_agent.gate.gate import gate
+from dispute_agent.orchestrator.run import Investigation
+from dispute_agent.review.create_review_case import create_review_case
+from dispute_agent.sync.sync import sync
+from dispute_agent.sync.synthesize import Draft
+from dispute_agent.sync.synthesize import SynthesisResult
 from test_derive import oracle_findings
 from test_policy_agent import rule
 from test_review import graph_for, s15_agent
@@ -95,7 +96,7 @@ def test_eval_refuses_fault(ds, monkeypatch, tmp_path, capsys):
 def test_row_has_review(ds, sections, tmp_path, monkeypatch):
     """The eval approves every pause: each row records the approval and no follow-up."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("dispute_agent.evaluate.build_graph", lambda ds_, sections_, *a, **k: graph_for(ds, sections, "S-15", s15_agent(ds)))
+    monkeypatch.setattr("dispute_agent.evaluation.evaluate.build_graph", lambda ds_, sections_, *a, **k: graph_for(ds, sections, "S-15", s15_agent(ds)))
     assert run_eval(str(Path(__file__).resolve().parent.parent / "data"), "dev", "S-15", 0, 0, 0) == 0
     row = json.loads(next((tmp_path / "runs").glob("eval_*.json")).read_text())["rows"][0]
     assert row["review"]["action"] == "approve" and row["followups"] == 0

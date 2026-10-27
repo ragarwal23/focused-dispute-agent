@@ -7,7 +7,7 @@ import warnings
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from .evaluate import CHECKS
+from dispute_agent.evaluation.evaluate import CHECKS
 
 NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "gate", "review"]  # a run pauses at review
 RESUME_HEAD = ["review", "account_agent_followup", "derive_states_followup", "sync"]  # a resume where the rep answered

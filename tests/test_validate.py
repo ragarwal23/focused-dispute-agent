@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
-from dispute_agent.validate import NORMAL, expected_children, expected_resume_children, stability, trace_check
+from dispute_agent.evaluation.validate import (
+    NORMAL, expected_children, expected_resume_children, stability, trace_check,
+)
 
 
 def test_expected_children():

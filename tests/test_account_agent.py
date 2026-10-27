@@ -2,7 +2,7 @@
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from dispute_agent.account_agent import AccountFindings, build_account_agent, initial_state, render_transcript
+from dispute_agent.account_agent.agent import AccountFindings, build_account_agent, initial_state, render_transcript
 
 
 class ScriptedModel:

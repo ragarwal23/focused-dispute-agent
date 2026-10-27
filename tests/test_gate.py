@@ -6,13 +6,13 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from dispute_agent.account_agent import AccountFindings
+from dispute_agent.account_agent.agent import AccountFindings
+from dispute_agent.account_agent.derive import derive_states
 from dispute_agent.data import load_dataset
-from dispute_agent.derive import derive_states
-from dispute_agent.gate import (
-    CHECKS, REGISTRY, RULES_OUT, Draft, add_business_days, find_duplicate, gate, run_checks,
-)
-from dispute_agent.policy_agent import PolicyFindings, RuleReading
+from dispute_agent.gate.checks import CHECKS, REGISTRY, RULES_OUT, add_business_days, run_checks
+from dispute_agent.gate.gate import find_duplicate, gate
+from dispute_agent.policy_agent.agent import PolicyFindings, RuleReading
+from dispute_agent.sync.synthesize import Draft
 from test_derive import oracle_findings
 
 ALL_IDS = sorted(load_dataset(Path(__file__).resolve().parent.parent / "data").scenarios)

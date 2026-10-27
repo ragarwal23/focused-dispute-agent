@@ -17,13 +17,12 @@ from typing import Any, Literal
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, create_model
 
-from .config import WORLD_TODAY, make_model
-from .data import Category
-from .derive import DerivedFacts
-from .gate import Draft
-from .policy_agent import PolicyFindings, RuleReading
-from .sync import SyncResult
-from .tools import wrap_memo
+from dispute_agent.account_agent.derive import DerivedFacts
+from dispute_agent.account_agent.tools import wrap_memo
+from dispute_agent.config import WORLD_TODAY, make_model
+from dispute_agent.data import Category, Route
+from dispute_agent.policy_agent.agent import PolicyFindings, RuleReading
+from dispute_agent.sync.sync import SyncResult
 
 SYNTHESIZE_SYSTEM = f"""You draft a payment-dispute review case for a human rep at Agarwal Motor Finance. Today is {WORLD_TODAY:%B %d, %Y}.
 You decide only which human queue gets the case (review_route). You never waive fees, move money or promise the customer anything.
@@ -38,6 +37,18 @@ Route rules, first match wins:
 
 Confidence: high only for adjustment_review or explain_events on clear records. Never high with need_more_evidence or manual_escalation.
 case_note: three to five plain sentences a rep can edit and file: what the customer says, what the records show (with event IDs), what policy says (with section IDs), and what happens next. No invented facts."""
+
+
+Confidence = Literal["high", "medium", "low"]
+
+
+class Draft(BaseModel):  # no docstring: pydantic would send it to the LLM as the schema description
+    review_route: Route = Field(description="Which human queue gets the case")
+    event_ids: list[str] = Field(description="Event IDs from the evidence shown that support the route, rep notes included")
+    policy_source_ids: list[str] = Field(description="Section IDs from the policy rules shown that support the route")
+    confidence: Confidence = Field(description="high, medium or low; never high with need_more_evidence or manual_escalation")
+    open_questions: list[str] = Field(default=[], description="What is still unknown; required for need_more_evidence, else empty")
+    case_note: str = Field(description="Three to five plain sentences a rep can edit and file")
 
 
 class SynthesisResult(BaseModel):

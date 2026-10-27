@@ -2,7 +2,7 @@
 
 import json
 
-from dispute_agent.tools import MEMO_CLOSE, MEMO_OPEN
+from dispute_agent.account_agent.tools import MEMO_CLOSE, MEMO_OPEN
 
 
 def test_account_id_hidden_from_llm(tools):

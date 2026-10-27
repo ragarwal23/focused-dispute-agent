@@ -3,8 +3,8 @@
 from datetime import datetime
 
 from dispute_agent.config import WORLD_TODAY
-from dispute_agent.policy_agent import PolicyFindings
-from dispute_agent.sync import sync
+from dispute_agent.policy_agent.agent import PolicyFindings
+from dispute_agent.sync.sync import sync
 from test_policy_agent import facts, rule
 
 

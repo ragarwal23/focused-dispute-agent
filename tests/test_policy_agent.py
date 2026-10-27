@@ -5,14 +5,14 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from dispute_agent.account_agent import AccountFindings
+from dispute_agent.account_agent.agent import AccountFindings
+from dispute_agent.account_agent.derive import derive_states
 from dispute_agent.config import WORLD_TODAY
 from dispute_agent.data import Scenario
-from dispute_agent.derive import derive_states
-from dispute_agent.policy_agent import (
-    NO_FACTS_YET, POLICY_SYSTEM, PolicyReading, RuleReading, candidates, check_citations, render_seed,
-    run_policy_agent, search_policy,
+from dispute_agent.policy_agent.agent import (
+    NO_FACTS_YET, POLICY_SYSTEM, PolicyReading, RuleReading, check_citations, render_seed, run_policy_agent,
 )
+from dispute_agent.policy_agent.retrieve import candidates, search_policy
 from test_derive import DEV_IDS
 
 

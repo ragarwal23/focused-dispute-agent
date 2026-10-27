@@ -16,9 +16,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 
-from .config import TOOL_BUDGET, WORLD_TODAY, make_model
-from .data import Category, Dataset
-from .tools import make_tools
+from dispute_agent.account_agent.tools import make_tools
+from dispute_agent.config import TOOL_BUDGET, WORLD_TODAY, make_model
+from dispute_agent.data import Category, Dataset
 
 # --- what the agent reports back ---------------------------------------------------------------
 

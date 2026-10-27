@@ -2,8 +2,8 @@
 
 import pytest
 
-from dispute_agent.create_review_case import create_review_case
-from dispute_agent.gate import GateResult, find_duplicate
+from dispute_agent.gate.gate import GateResult, find_duplicate
+from dispute_agent.review.create_review_case import create_review_case
 from test_policy_agent import facts
 
 

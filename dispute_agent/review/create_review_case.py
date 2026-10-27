@@ -13,9 +13,9 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-from .data import Category, Dataset, Route
-from .derive import DerivedFacts
-from .gate import GateResult
+from dispute_agent.account_agent.derive import DerivedFacts
+from dispute_agent.data import Category, Dataset, Route
+from dispute_agent.gate.gate import GateResult
 
 
 class CaseResult(BaseModel):

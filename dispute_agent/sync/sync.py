@@ -19,9 +19,10 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from .data import Category, Route
-from .derive import DerivedFacts
-from .policy_agent import PolicyFindings, PolicySection, RuleReading, candidates, in_force
+from dispute_agent.account_agent.derive import DerivedFacts
+from dispute_agent.data import Category, Route
+from dispute_agent.policy_agent.agent import PolicyFindings, RuleReading
+from dispute_agent.policy_agent.retrieve import PolicySection, candidates, in_force
 
 
 class SyncResult(BaseModel):

@@ -4,9 +4,9 @@ from pathlib import Path
 
 import pytest
 
-from dispute_agent.account_agent import AccountFindings, OtherAccountMatch
+from dispute_agent.account_agent.agent import AccountFindings, OtherAccountMatch
+from dispute_agent.account_agent.derive import derive_states
 from dispute_agent.data import Scenario, load_dataset
-from dispute_agent.derive import derive_states
 
 DEV_IDS = [
     s.scenario_id for s in load_dataset(Path(__file__).resolve().parent.parent / "data").scenarios.values()

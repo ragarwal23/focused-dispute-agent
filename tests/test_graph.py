@@ -2,15 +2,15 @@
 
 from datetime import datetime
 
-from dispute_agent.gate import Draft
+from dispute_agent.sync.synthesize import Draft
 import pytest
 from langgraph.types import Command
 
-from dispute_agent.pipeline import (
-    FAULT_POLICY_DATE, MAX_ATTEMPTS, CategoryChoice, build_graph, initial_graph_state, investigate, thread_config,
-)
-from dispute_agent.policy_agent import PolicyReading
-from dispute_agent.review import APPROVE
+from dispute_agent.orchestrator.classify import CategoryChoice
+from dispute_agent.orchestrator.graph import FAULT_POLICY_DATE, MAX_ATTEMPTS, build_graph, initial_graph_state
+from dispute_agent.orchestrator.run import investigate, thread_config
+from dispute_agent.policy_agent.agent import PolicyReading
+from dispute_agent.review.review import APPROVE
 from test_derive import oracle_findings
 from test_policy_agent import FakeModel, rule
 from test_sync import account_state
@@ -86,7 +86,7 @@ def test_clarify_gives_up_after_two(ds, sections):
 
 def test_re_retrieve_once(ds, sections, monkeypatch):
     """The first read happened on a date with a different policy set: the Policy Agent runs once more on the disputed event's date."""
-    monkeypatch.setattr("dispute_agent.pipeline.WORLD_TODAY", datetime(2026, 4, 15))  # LF.v2 was in force then
+    monkeypatch.setattr("dispute_agent.orchestrator.graph.WORLD_TODAY", datetime(2026, 4, 15))  # LF.v2 was in force then
     agent = FakeAccountAgent(account_state(oracle_findings(ds.scenarios["S-02"])))
     order, final, agent, policy_model, _ = run(ds, sections, agent)
     assert order == NORMAL[:5] + ["policy_agent_retry", "sync"] + NORMAL[5:]
@@ -98,7 +98,7 @@ def test_re_retrieve_once(ds, sections, monkeypatch):
 
 
 def test_both_re_requests_then_stop(ds, sections, monkeypatch):
-    monkeypatch.setattr("dispute_agent.pipeline.WORLD_TODAY", datetime(2026, 4, 15))
+    monkeypatch.setattr("dispute_agent.orchestrator.graph.WORLD_TODAY", datetime(2026, 4, 15))
     agent = FakeAccountAgent(account_state(None, errors=["finalize failed: x"]), account_state(oracle_findings(ds.scenarios["S-02"])))
     order, final, agent, policy_model, _ = run(ds, sections, agent)
     assert order == NORMAL[:5] + ["account_agent_retry", "derive_states_retry", "sync", "policy_agent_retry", "sync"] + NORMAL[5:]

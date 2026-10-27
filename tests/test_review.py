@@ -7,15 +7,15 @@ from pydantic import ValidationError
 
 from conftest import DATA
 from dispute_agent.__main__ import main
-from dispute_agent.account_agent import AccountFindings
-from dispute_agent.gate import Draft
-from dispute_agent.pipeline import (
-    MAX_FOLLOWUPS, CategoryChoice, Investigation, build_graph, investigate, resume, sqlite_checkpointer, start, thread_status,
-)
-from dispute_agent.policy_agent import PolicyReading
-from dispute_agent.review import APPROVE, Pause, ReviewDecision, build_request, with_answer
+from dispute_agent.account_agent.agent import AccountFindings
+from dispute_agent.orchestrator.classify import CategoryChoice
+from dispute_agent.orchestrator.graph import MAX_FOLLOWUPS, build_graph, sqlite_checkpointer
+from dispute_agent.orchestrator.run import Investigation, investigate, resume, start, thread_status
+from dispute_agent.policy_agent.agent import PolicyReading
+from dispute_agent.review.review import APPROVE, Pause, ReviewDecision, build_request, with_answer
+from dispute_agent.sync.synthesize import Draft
 from test_derive import oracle_findings
-from test_pipeline import NORMAL, FakeAccountAgent, run
+from test_graph import NORMAL, FakeAccountAgent, run
 from test_policy_agent import FakeModel, rule
 from test_sync import account_state
 

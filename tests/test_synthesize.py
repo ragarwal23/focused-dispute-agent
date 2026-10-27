@@ -2,12 +2,10 @@
 
 import pytest
 
+from dispute_agent.account_agent.tools import MEMO_CLOSE, MEMO_OPEN
 from dispute_agent.data import Route
-from dispute_agent.gate import Draft
-from dispute_agent.policy_agent import PolicyFindings
-from dispute_agent.sync import SyncResult, sync
-from dispute_agent.synthesize import SYNTHESIZE_SYSTEM, draft_schema, render_case, run_synthesize
-from dispute_agent.tools import MEMO_CLOSE, MEMO_OPEN
+from dispute_agent.sync.sync import sync
+from dispute_agent.sync.synthesize import SYNTHESIZE_SYSTEM, Draft, draft_schema, render_case, run_synthesize
 from test_derive import DEV_IDS, oracle_findings
 from test_gate import oracle_derived
 from test_policy_agent import FakeModel, rule
