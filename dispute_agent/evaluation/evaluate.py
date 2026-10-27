@@ -7,8 +7,8 @@ Table columns, left to right:
     gap / amb / oam                   fact_gap, fact_ambiguous, other_account_match flags right
     calls / budget / err              tool calls used, budget hit, tool errors
     pret / pcite / pforb / pamb       policy: required sections retrieved, cited, no forbidden cited, # ambiguous
-    route                             final route (after the gate) matches the key
-    rej                               the gate rejected the draft (reported, not summed)
+    route                             final route (what the rep was asked to approve) matches the key
+    cons                              policy-consistent: P1-P7 do not rule out the final route (needs no answer key)
     conf                              confidence consistent: never high on a cautious route; no draft fails
     devt / dpol                       the draft cites the required events and none forbidden / the required sections
     traj                              trajectory: each agent ran at most twice, tool calls within budget
@@ -31,6 +31,7 @@ from dispute_agent.config import MODEL_ID, TOOL_BUDGET
 from dispute_agent.data import Dataset, Route, Scenario, load_dataset
 from dispute_agent.evaluation.golden import GOLDEN_PATH, PRODUCERS
 from dispute_agent.evaluation.metrics import grade, row_verdicts
+from dispute_agent.evaluation.policy_checks import ruled_out
 from dispute_agent.orchestrator.graph import MAX_ATTEMPTS, build_graph
 from dispute_agent.orchestrator.run import Investigation, investigate
 from dispute_agent.policy_agent.retrieve import load_policies
@@ -39,13 +40,13 @@ HEADER = (
     f"{'scenario':<9}{'trap':<15}{'wording':<8}"
     f"| {'cat':<4}{'disp':<5}{'req':<4}{'forb':<5}{'drop':<5}{'pay':<4}{'ref':<4}{'key':<4}"
     f"| {'gap':<4}{'amb':<4}{'oam':<4}| {'calls':<6}{'budget':<7}{'err':<4}"
-    f"| {'pret':<5}{'pcite':<6}{'pforb':<6}{'pamb':<5}| {'route':<6}{'rej':<4}{'conf':<5}{'devt':<5}{'dpol':<5}"
+    f"| {'pret':<5}{'pcite':<6}{'pforb':<6}{'pamb':<5}| {'route':<6}{'cons':<5}{'conf':<5}{'devt':<5}{'dpol':<5}"
     f"| {'traj':<5}{'act':<4}"
 )
 CHECKS = (  # the pass/fail checks summed in the totals line
     "category_ok", "disputed_ok", "required_found", "forbidden_clear", "payment_ok", "refund_ok", "states_ok_keycat",
     "gap_ok", "ambiguous_ok", "oam_ok", "route_ok", "confidence_ok", "draft_events_ok", "draft_policy_ok",
-    "trajectory_ok", "action_ok",
+    "trajectory_ok", "action_ok", "policy_consistent",
 )
 FORBIDDEN_POLICY_PREFIXES = ("LF.v2.", "EX.v1.")  # superseded or out-of-scope policy; never a valid citation
 CAUTIOUS_ROUTES = ("need_more_evidence", "manual_escalation")  # confidence must not be high on these
@@ -62,7 +63,7 @@ def expected_flags(s: Scenario) -> tuple[bool, bool, bool]:
 
 
 def score(s: Scenario, inv: Investigation, ds: Dataset) -> dict[str, Any]:
-    account, derived, policy, draft, g = inv.account, inv.derived, inv.policy, inv.synthesis.draft, inv.gate
+    account, derived, policy, draft, route = inv.account, inv.derived, inv.policy, inv.synthesis.draft, inv.synthesis.route
     f = account["findings"]
     ok = f is not None  # a failed finalize fails every model-side check, so a null key can't score it as right
     raw_cited = set()  # every event ID the model cited, before derive_states cleans them
@@ -93,12 +94,11 @@ def score(s: Scenario, inv: Investigation, ds: Dataset) -> dict[str, Any]:
         "policy_forbidden_clear": not [i for i in cited if i.startswith(FORBIDDEN_POLICY_PREFIXES)],
         "policy_ambiguous_count": sum(r.policy_ambiguous for r in policy.rules),
         "policy_dropped": len(policy.dropped_section_ids),
-        # the draft and the gate: the final route is what the rep sees, so that is what is scored
+        # the draft: the final route is what the rep sees (manual_escalation without a draft), so that is what is scored
         "draft_route": draft.review_route if draft else None,
-        "route_final": g.route,
-        "route_ok": g.route == s.expected_route,
-        "gate_rejected": g.gate_rejected,
-        "gate_reasons": g.gate_reasons,
+        "route_final": route,
+        "route_ok": route == s.expected_route,
+        "policy_consistent": route not in ruled_out(ds, s.account_id, derived),
         "confidence_ok": draft is not None and not (draft.confidence == "high" and draft.review_route in CAUTIOUS_ROUTES),
         "draft_events_ok": draft is not None and required <= set(draft.event_ids) and not (forbidden & set(draft.event_ids)),
         "draft_policy_ok": draft is not None and expected_policy <= set(draft.policy_source_ids),
@@ -119,7 +119,7 @@ def row_line(s: Scenario, c: dict[str, Any]) -> str:
         f"| {c['tool_calls']:<6}{'HIT' if c['budget_hit'] else 'no':<7}{c['errors']:<4}| "
         f"{_mark(c['policy_retrieved_ok']):<5}{_mark(c['policy_cited_ok']):<6}"
         f"{_mark(c['policy_forbidden_clear']):<6}{c['policy_ambiguous_count']:<5}"
-        f"| {_mark(c['route_ok']):<6}{'yes' if c['gate_rejected'] else 'no':<4}{_mark(c['confidence_ok']):<5}"
+        f"| {_mark(c['route_ok']):<6}{_mark(c['policy_consistent']):<5}{_mark(c['confidence_ok']):<5}"
         f"{_mark(c['draft_events_ok']):<5}{_mark(c['draft_policy_ok']):<5}"
         f"| {_mark(c['trajectory_ok']):<5}{_mark(c['action_ok']):<4}"
     )
@@ -197,7 +197,6 @@ def run_eval(
             "policy": inv.policy.model_dump(mode="json"),
             "sync": inv.sync.model_dump(mode="json"),
             "draft": draft.model_dump() if draft else None,
-            "gate": inv.gate.model_dump(mode="json"),
             "tool_errors": inv.account["tool_errors"],
         })
 

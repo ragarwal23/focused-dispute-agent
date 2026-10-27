@@ -22,7 +22,7 @@ export interface Draft {
   confidence: "high" | "medium" | "low"; open_questions: string[]; case_note: string;
 }
 export interface ReviewRequest {
-  thread_label: string; route: Route; gate_rejected: boolean; gate_reasons: string[]; existing_case_id: string | null;
+  thread_label: string; route: Route; existing_case_id: string | null;
   draft: Draft | null; open_questions: string[]; can_answer: boolean;
   account_attempts: number; policy_attempts: number; followups: number;
 }
@@ -41,7 +41,7 @@ export interface StepEvent {
 export interface PauseEvent { type: "pause"; thread_id: string; request: ReviewRequest }
 export interface ResultEvent {
   type: "result"; thread_id: string; case: CaseResult; review: Decision & { route?: Route | null; reason?: string | null };
-  draft: Draft | null; gate: { route: Route; gate_rejected: boolean; gate_reasons: string[]; existing_case_id: string | null };
+  draft: Draft | null; route: Route;
 }
 export interface ErrorEvent { type: "error"; thread_id: string; message: string }
 export type StreamEvent = StepEvent | PauseEvent | ResultEvent | ErrorEvent;

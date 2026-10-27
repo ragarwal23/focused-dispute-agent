@@ -28,9 +28,9 @@ GOLDEN_OUTPUTS = (
     "expected_policy_ids", "rationale",
 )
 
-NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "gate", "review"]  # a run pauses at review
+NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "review"]  # a run pauses at review
 RESUME_HEAD = ["review", "account_agent_followup", "derive_states_followup", "sync"]  # a resume where the rep answered
-RESUME_TAIL = ["synthesize", "gate", "review"]
+RESUME_TAIL = ["synthesize", "review"]
 
 
 def expected_children(account_attempts: int, policy_attempts: int) -> list[str]:
@@ -168,13 +168,13 @@ def replay_output(row: dict[str, Any] | None) -> dict[str, Any]:
         return {"status": "not run"}
     if "exception" in row:
         return {"status": "exception", "exception": row["exception"]}
-    draft, gate, filed = row.get("draft") or {}, row.get("gate") or {}, row.get("case") or {}
+    draft, checks, filed = row.get("draft") or {}, row.get("checks") or {}, row.get("case") or {}
     return {
-        "status": "ok", "route": gate.get("route"), "draft_route": draft.get("review_route"),
+        "status": "ok", "route": checks.get("route_final"), "draft_route": draft.get("review_route"),
         "disputed_event_id": (row.get("findings") or {}).get("disputed_event_id"), "event_ids": draft.get("event_ids"),
         "policy_source_ids": draft.get("policy_source_ids"), "confidence": draft.get("confidence"),
         "open_questions": draft.get("open_questions"), "case_note": draft.get("case_note"),
-        "gate_rejected": gate.get("gate_rejected"), "case_created": filed.get("created"),
+        "policy_consistent": checks.get("policy_consistent"), "case_created": filed.get("created"),
     }
 
 

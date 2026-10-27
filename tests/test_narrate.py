@@ -38,13 +38,13 @@ def test_clean_sequence(ds, sections):
     _, events = start(ds, sections, "S-02", FakeAccountAgent(account_state(oracle_findings(ds.scenarios["S-02"]))))
     keys = starts(events)
     assert keys[0] == "classify" and set(keys[1:3]) == {"account_agent", "policy_agent"}  # the two agents run in parallel
-    assert keys[3:] == ["derive_states", "sync", "synthesize", "gate", "review"]
+    assert keys[3:] == ["derive_states", "sync", "synthesize", "review"]
     for e in events[:-1]:
         assert e["type"] == "step" and e["owner"] == STEPS[e["key"]].owner and e["parent"] is None and e["label"]
     ends = {e["key"]: e for e in events if e.get("phase") == "end"}
     assert set(ends) == set(keys) - {"review"}  # review has no end: the pause closes it
     assert ends["classify"]["label"] == "Dispute type: late fee with autopay on"
-    assert ends["gate"]["label"] == "Gate: agrees → adjustment_review" and ends["gate"]["detail"] is None
+    assert ends["synthesize"]["label"] == "Draft written: route adjustment_review" and ends["synthesize"]["detail"] is None
     assert ends["sync"]["label"] == "Cross-check: no issues"
     assert events[-1]["type"] == "pause" and events[-1]["request"]["route"] == "adjustment_review"
     assert [e["owner"] for e in events if e.get("key") == "review"] == ["you"]

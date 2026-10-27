@@ -6,8 +6,7 @@ from dispute_agent.account_agent.tools import MEMO_CLOSE, MEMO_OPEN
 from dispute_agent.data import Route
 from dispute_agent.sync.sync import sync
 from dispute_agent.sync.synthesize import SYNTHESIZE_SYSTEM, Draft, draft_schema, render_case, run_synthesize
-from test_derive import DEV_IDS, oracle_findings
-from test_gate import oracle_derived
+from test_derive import DEV_IDS, oracle_derived, oracle_findings
 from test_policy_agent import FakeModel, rule
 from test_sync import account_state, policy_with
 
@@ -79,6 +78,7 @@ def test_run_with_fake(ds, sections):
     fake = RecordingModel(draft)
     result = run_synthesize(s.expected_category, s.rep_message, account, derived, policy, synced, fake, {"run_name": "t"})
     assert result.draft == draft and type(result.draft) is Draft and result.errors == [] and fake.calls == 1
+    assert result.route == "adjustment_review"  # the route follows the draft
     assert [type(m).__name__ for m in fake.messages] == ["SystemMessage", "HumanMessage"] and fake.config == {"run_name": "t"}
     assert fake.messages[1].content == render_case(s.expected_category, s.rep_message, account, derived, policy, synced)
 
@@ -88,6 +88,7 @@ def test_run_llm_error(ds, sections):
     fake = FakeModel(RuntimeError("boom"))
     result = run_synthesize(s.expected_category, s.rep_message, account, derived, policy, synced, fake)
     assert result.draft is None and result.errors == ["synthesize failed: RuntimeError: boom"] and fake.calls == 1
+    assert result.route == "manual_escalation"  # no draft, so the case escalates
 
 
 def test_run_bad_output(ds, sections):
@@ -144,3 +145,13 @@ def test_run_rejects_unshown_id_in_dict(ds, sections):
            "confidence": "medium", "case_note": "x"}
     result = run_synthesize(s.expected_category, s.rep_message, account, derived, policy, synced, FakeModel(raw))
     assert result.draft is None and result.errors[0].startswith("synthesize failed: ValidationError")
+
+
+def test_run_rejects_id_when_none_shown(ds, sections):
+    """No evidence shown: the schema falls back to list[str], so run_synthesize rejects any event ID itself."""
+    s, account, derived, policy, synced = oracle_case(ds, sections, "S-14")
+    derived = derived.model_copy(update={"evidence_events": []})
+    fake = FakeModel(_draft(event_ids=["E-0132"], policy_source_ids=[]))
+    result = run_synthesize(s.expected_category, s.rep_message, account, derived, policy, synced, fake)
+    assert result.draft is None and result.route == "manual_escalation"
+    assert result.errors == ["synthesize failed: ValueError: cited IDs that were not shown: ['E-0132']"]

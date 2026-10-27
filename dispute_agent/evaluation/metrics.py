@@ -1,6 +1,6 @@
 """Phase 2 metrics: the six axes over evaluate.py's checks, a grade and score per scenario, slices, before/after.
 
-Pure functions over eval JSON rows. The 18 checks do not change; an axis is a named grouping of them with a
+Pure functions over eval JSON rows. The checks are evaluate.py's; an axis is a named grouping of them with a
 PASS / PARTIAL / FAIL verdict (the table in README.md). The four judge axes are scored 0-3 in judge.py and
 turned into verdicts here.
 """
@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 Verdict = Literal["PASS", "PARTIAL", "FAIL"]
 AXES = ("route", "disputed_event", "evidence", "policy", "confidence", "guardrails")
-JUDGE_AXES = ("faithfulness", "reasoning_agreement", "actionability", "safety")
+JUDGE_AXES = ("no_invented_facts", "matches_rationale", "ready_to_file", "no_leaks_or_promises")
 METRIC_NAMES = AXES + ("grade", "score") + JUDGE_AXES + ("judge_mean",)  # the 13; also the LangSmith feedback keys
 SLICE_KEYS = ("wording", "note_driven", "trap", "category", "route")
 SLICE_SOURCE = {"wording": "wording", "note_driven": "note_driven", "trap": "trap", "category": "category_expected", "route": "route_expected"}
@@ -29,15 +29,15 @@ def axis_verdicts(checks: dict[str, Any] | None) -> dict[str, Verdict]:
     if not checks:
         return {axis: "FAIL" for axis in AXES}
     no_draft = checks.get("draft_route") is None
-    if _ok(checks, "route_ok"):
-        route: Verdict = "PARTIAL" if checks.get("gate_rejected") else "PASS"
-    else:
-        route = "FAIL"
+    # right only because there was no draft (the fallback escalation, not a decision) is PARTIAL
+    route: Verdict = "FAIL" if not _ok(checks, "route_ok") else "PARTIAL" if no_draft else "PASS"
     req, forb, draft_ev = _ok(checks, "required_found"), _ok(checks, "forbidden_clear"), _ok(checks, "draft_events_ok")
     evidence: Verdict = "FAIL" if no_draft or not (req and forb) else "PASS" if draft_ev else "PARTIAL"
     pret, pcite, pforb, dpol = (_ok(checks, k) for k in ("policy_retrieved_ok", "policy_cited_ok", "policy_forbidden_clear", "draft_policy_ok"))
     policy: Verdict = "FAIL" if no_draft or not (pret and pcite and pforb) else "PASS" if dpol else "PARTIAL"
+    # policy_consistent is absent from reports made before the gate was removed (v0.8); only an explicit False fails
     guard = all(_ok(checks, k) for k in ("category_ok", "action_ok", "trajectory_ok"))
+    guard = guard and checks.get("policy_consistent") is not False
     return {
         "route": route, "disputed_event": "PASS" if _ok(checks, "disputed_ok") else "FAIL", "evidence": evidence,
         "policy": policy, "confidence": "PASS" if _ok(checks, "confidence_ok") else "FAIL",

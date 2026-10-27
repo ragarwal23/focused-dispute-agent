@@ -66,7 +66,7 @@ def test_trace_check_waits_then_exits_2():
 
 def test_resume_shapes():
     assert expected_resume_children(False) == [
-        "review", "account_agent_followup", "derive_states_followup", "sync", "synthesize", "gate", "review"]
+        "review", "account_agent_followup", "derive_states_followup", "sync", "synthesize", "review"]
     assert expected_resume_children(True)[4:6] == ["policy_agent_retry", "sync"]
 
 
@@ -132,7 +132,9 @@ def test_replay_target(ds):
     rows = {r["scenario_id"]: r for r in eval_data(ds)["rows"]}
     out = replay_output(rows["S-01"])
     assert out["status"] == "ok" and out["route"] == "explain_events" and out["case_note"] == "The fee stands." and out["case_created"] is True
-    assert replay_output(rows["S-07"])["draft_route"] is None and replay_output(rows["S-07"])["gate_rejected"] is True
+    s07 = replay_output(rows["S-07"])
+    assert s07["draft_route"] is None and s07["route"] == "manual_escalation" and s07["policy_consistent"] is True
+    assert "gate_rejected" not in s07
     assert replay_output(rows["S-02"]) == {"status": "exception", "exception": "KeyError: 'x'"}
     assert replay_output(None) == {"status": "not run"}
 
@@ -143,10 +145,10 @@ def test_feedback_keys_are_the_13(ds, tmp_path):
     assert [f["key"] for f in axes] == list(METRIC_NAMES[:8]) and axes[0] == {"key": "route", "score": 1.0, "value": "PASS"}
     assert axes[-1] == {"key": "score", "score": 1.0, "value": "6/6"} and axes_feedback(rows["S-02"])["results"][6]["value"] == "FAIL"
     judged = judge_feedback(judge_data(tmp_path)["rows"]["S-01"])["results"]
-    assert [f["key"] for f in judged] == list(METRIC_NAMES[8:]) and judged[3] == {"key": "safety", "score": 1 / 3, "value": 1, "comment": "r"}
+    assert [f["key"] for f in judged] == list(METRIC_NAMES[8:]) and judged[3] == {"key": "no_leaks_or_promises", "score": 1 / 3, "value": 1, "comment": "r"}
     assert judged[-1] == {"key": "judge_mean", "score": 2.25 / 3, "value": 2.25}
     err = judge_feedback({"judge_error": "boom"})["results"]
-    assert err[0] == {"key": "faithfulness", "score": None, "value": "ERR", "comment": "boom"} and err[-1]["value"] is None
+    assert err[0] == {"key": "no_invented_facts", "score": None, "value": "ERR", "comment": "boom"} and err[-1]["value"] is None
     assert axes_feedback(None) == {"results": []} and judge_feedback(None) == {"results": []}
 
 

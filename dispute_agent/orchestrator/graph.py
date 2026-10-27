@@ -1,7 +1,7 @@
 """The orchestrator graph: which node runs after which. Start reading the code here.
 
     classify ─┬> account_agent -> derive_states ─┐
-              └> policy_agent ───────────────────┴> sync -> synthesize -> gate -> review -> create_review_case
+              └> policy_agent ───────────────────┴> sync -> synthesize -> review -> create_review_case
 
 LangGraph decides what runs next; the LLM is only called inside the nodes. After classify the two agents fan out in
 parallel and meet at sync, a join node. Sync can send each agent back once (docs/plans/orchestrator.md, O2): the
@@ -10,13 +10,12 @@ disputed event's date than on the complaint date it first read. The retry paths 
 back into sync; re-entering the fan-out nodes would hit the join barrier and end the run silently. Nothing else is
 ever retried.
 
-After the gate the graph pauses at `review` for a person (docs/plans/human-review.md). A checkpointer saves the
+After synthesize the graph pauses at `review` for a person (docs/plans/human-review.md). A checkpointer saves the
 state after every node, so the run can be resumed later, in another process (run.py). The rep approves, overrides
 the route, or, on need_more_evidence, answers once: the Account Agent then looks again through its own follow-up
 nodes and the run comes back to `review`.
 
-Each node is a few lines that call into the folder named after it: account_agent/, policy_agent/, sync/, gate/,
-review/.
+Each node is a few lines that call into the folder named after it: account_agent/, policy_agent/, sync/, review/.
 """
 
 from __future__ import annotations
@@ -37,11 +36,10 @@ from dispute_agent.account_agent.agent import AccountFindings, OtherAccountMatch
 from dispute_agent.account_agent.derive import DerivedFacts, derive_states
 from dispute_agent.config import WORLD_TODAY
 from dispute_agent.data import Category, Dataset
-from dispute_agent.gate.gate import GateResult, SectionCheck, gate
 from dispute_agent.orchestrator.classify import classify
 from dispute_agent.policy_agent.agent import PolicyFindings, RuleReading, run_policy_agent
 from dispute_agent.policy_agent.retrieve import PolicySection, RetrievedSection
-from dispute_agent.review.create_review_case import CaseResult, create_review_case
+from dispute_agent.review.create_review_case import CaseResult, create_review_case, find_duplicate
 from dispute_agent.review.review import ReviewDecision, build_request, with_answer
 from dispute_agent.sync.sync import SyncResult, sync
 from dispute_agent.sync.synthesize import Draft, SynthesisResult, run_synthesize
@@ -51,7 +49,7 @@ MAX_FOLLOWUPS = 1  # the rep can answer open questions once per complaint
 # The checkpoint serializer may load our state models by name; LangGraph warns on (and will block) any other class.
 SERDE = JsonPlusSerializer(allowed_msgpack_modules=(
     AccountFindings, OtherAccountMatch, DerivedFacts, PolicyFindings, PolicySection, RetrievedSection, RuleReading,
-    SyncResult, SynthesisResult, Draft, GateResult, SectionCheck, CaseResult, ReviewDecision,
+    SyncResult, SynthesisResult, Draft, CaseResult, ReviewDecision,
 ))
 FAULTS = ("finalize_once", "policy_date_mismatch")
 FAULT_POLICY_DATE = datetime(2026, 4, 15)  # LF.v2 was in force; LF.v3 begins 2026-05-01
@@ -76,7 +74,6 @@ class GraphState(TypedDict, total=False):
     policy: PolicyFindings | None
     sync: SyncResult | None
     synthesis: SynthesisResult | None
-    gate: GateResult | None
     case: CaseResult | None
     account_attempts: int
     policy_attempts: int
@@ -154,12 +151,10 @@ def build_graph(
             s["category"], s["rep_message"], s["account"], s["derived"], s["policy"], s["sync"], model=synthesize_model,
         )}
 
-    def gate_node(s: GraphState) -> dict[str, Any]:
-        return {"gate": gate(s["synthesis"].draft, s["account_id"], s["category"], s["derived"], s["policy"], sections, ds)}
-
     def review_node(s: GraphState) -> dict[str, Any]:
         """Pause for the rep. Re-runs from the top on resume, so nothing before interrupt() but reading state."""
-        request = build_request(s, s["thread_label"], MAX_FOLLOWUPS)
+        existing = find_duplicate(ds, s["account_id"], s["category"], s["derived"].disputed_event_id)
+        request = build_request(s, s["thread_label"], MAX_FOLLOWUPS, existing)
         decision = ReviewDecision.model_validate(interrupt(request.model_dump(mode="json")))
         while decision.action == "answer" and not request.can_answer:  # refused: pause again (raising would replay it)
             decision = ReviewDecision.model_validate(interrupt(request.model_dump(mode="json")))
@@ -172,8 +167,8 @@ def build_graph(
         return {**out, "rep_message": message, "rep_answer": s["review"].answer, "followups": s["followups"] + 1}
 
     def case_node(s: GraphState) -> dict[str, Any]:
-        override = s["review"].route if s["review"].action == "override" else None
-        return {"case": create_review_case(ds, s["account_id"], s["category"], s["derived"], s["gate"], override)}
+        route = s["review"].route if s["review"].action == "override" else s["synthesis"].route
+        return {"case": create_review_case(ds, s["account_id"], s["category"], s["derived"], route)}
 
     g = StateGraph(GraphState)
     g.add_node("classify", classify_node)
@@ -185,7 +180,6 @@ def build_graph(
     g.add_node("derive_states_retry", derive_node)
     g.add_node("policy_agent_retry", policy_retry_node)
     g.add_node("synthesize", synthesize_node)
-    g.add_node("gate", gate_node)
     g.add_node("review", review_node)
     g.add_node("account_agent_followup", account_followup_node)
     g.add_node("derive_states_followup", derive_node)
@@ -200,8 +194,7 @@ def build_graph(
     g.add_edge("account_agent_retry", "derive_states_retry")  # the two bounded re-requests, plain edges back in
     g.add_edge("derive_states_retry", "sync")
     g.add_edge("policy_agent_retry", "sync")
-    g.add_edge("synthesize", "gate")
-    g.add_edge("gate", "review")
+    g.add_edge("synthesize", "review")
     g.add_conditional_edges("review", after_review, ["account_agent_followup", "create_review_case"])
     g.add_edge("account_agent_followup", "derive_states_followup")  # same join rule as the retries: own nodes
     g.add_edge("derive_states_followup", "sync")

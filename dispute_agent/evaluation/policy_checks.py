@@ -1,18 +1,22 @@
-"""Our own policy checks, P1-P7, written in Python. No LLM. The gate (gate.py) runs them on every draft.
+"""Our own policy checks, P1-P7, in Python. No LLM. The eval runs them; the agent never does.
 
-Each check reads structured event fields only, never notes or the LLM's reading of the policy, and returns
-"true", "false" or "unknown". REGISTRY maps every policy section ID to the check that enforces it, or to
-"procedural" (mirrors data/policies/README.md). A "true" result rules out one route (RULES_OUT).
+Each check reads structured event fields only, never notes or the LLM's reading of the policy, and returns "true",
+"false" or "unknown". A "true" result rules out one route (RULES_OUT). `audit` checks the golden labels: no expected
+route may be ruled out. `ruled_out` feeds the eval's `policy_consistent` check, which needs no golden answer, so it
+can score live cases too. The checks cannot read notes, so a wrong route decided by a note alone (S-03, S-10, S-14)
+passes them. `python -m dispute_agent.evaluation.policy_checks` prints the audit and exits 1 on any conflict.
 """
 
 from __future__ import annotations
 
+import sys
 from datetime import date, datetime, time, timedelta
 from typing import Literal
 
-from dispute_agent.account_agent.derive import DerivedFacts
+from dispute_agent.account_agent.derive import DerivedFacts, derive_states
 from dispute_agent.config import WORLD_TODAY
-from dispute_agent.data import PAYMENT_TYPES, Dataset, Event, Route
+from dispute_agent.data import PAYMENT_TYPES, Dataset, Event, Route, load_dataset
+from dispute_agent.evaluation.golden import key_findings
 
 # --- policy constants (data/README.md, P1-P7) -----------------------------------------------------
 
@@ -23,9 +27,6 @@ REFUND_BUSINESS_DAYS = 10  # P7
 HOLIDAYS = {date(2026, 9, 7), date(2026, 10, 12)}  # Labor Day, Columbus Day: inside the data window
 
 Verdict = Literal["true", "false", "unknown"]
-
-# --- registry: section ID -> our check, or "procedural" (mirrors data/policies/README.md) ------------
-
 RULES_OUT: dict[str, Route] = {
     "late_fee_unwarranted": "explain_events",
     "lender_side_failure": "explain_events",
@@ -33,16 +34,6 @@ RULES_OUT: dict[str, Route] = {
     "return_fee_valid": "adjustment_review",
     "refund_overdue": "explain_events",
 }
-_REGISTERED = {
-    "late_fee_unwarranted": "LF.v3.s1 LF.v3.s2 LF.v3.s4",
-    "lender_side_failure": "LF.v3.s3 LF.v3.s5 AP.v1.s5 RR.v1.s7",
-    "customer_cancelled_autopay": "AP.v1.s4",
-    "return_fee_valid": "RR.v1.s2 RR.v1.s3",
-    "refund_overdue": "RF.v1.s2 RF.v1.s4",
-    "procedural": "LF.v3.s6 LF.v3.s7 LF.v3.s8 AP.v1.s1 AP.v1.s2 AP.v1.s3 AP.v1.s6 "
-                  "RR.v1.s1 RR.v1.s4 RR.v1.s5 RR.v1.s6 RR.v1.s8 RF.v1.s1 RF.v1.s3 RF.v1.s5 RF.v1.s6",
-}
-REGISTRY: dict[str, str] = {s: check for check, ids in _REGISTERED.items() for s in ids.split()}
 
 
 # --- the five checks -------------------------------------------------------------------------------
@@ -183,3 +174,26 @@ CHECKS = {
 
 def run_checks(ds: Dataset, account_id: str, derived: DerivedFacts) -> dict[str, Verdict]:
     return {name: check(ds, account_id, derived) for name, check in CHECKS.items()}
+
+
+def ruled_out(ds: Dataset, account_id: str, derived: DerivedFacts) -> set[Route]:
+    """The routes P1-P7 rule out on these facts. The two cautious routes never appear."""
+    return {RULES_OUT[name] for name, verdict in run_checks(ds, account_id, derived).items() if verdict == "true"}
+
+
+def audit(ds: Dataset) -> tuple[list[str], bool]:
+    """Every scenario's answer key through P1-P7: one line each, ok unless the expected route is ruled out."""
+    lines, ok = [], True
+    for s in ds.scenarios.values():
+        derived = derive_states(key_findings(s), s.expected_category, s.account_id, ds)
+        true = [name for name, verdict in run_checks(ds, s.account_id, derived).items() if verdict == "true"]
+        conflict = s.expected_route in ruled_out(ds, s.account_id, derived)
+        ok &= not conflict
+        lines.append(f"{s.scenario_id} {s.expected_route:<19} true: {', '.join(true) or '-':<50} {'CONFLICT' if conflict else 'ok'}")
+    return lines, ok
+
+
+if __name__ == "__main__":
+    lines, ok = audit(load_dataset("data"))
+    print("\n".join(lines))
+    sys.exit(0 if ok else 1)

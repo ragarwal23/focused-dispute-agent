@@ -1,4 +1,4 @@
-"""The human pause after the gate: the payload, approve, override, the one answer, refusals, SQLite resume and recovery."""
+"""The human pause after synthesize: the payload, approve, override, the one answer, refusals, SQLite resume and recovery."""
 
 import logging
 
@@ -19,7 +19,7 @@ from test_graph import NORMAL, FakeAccountAgent, run
 from test_policy_agent import FakeModel, rule
 from test_sync import account_state
 
-FOLLOWUP = ["account_agent_followup", "derive_states_followup", "sync", "synthesize", "gate", "review"]
+FOLLOWUP = ["account_agent_followup", "derive_states_followup", "sync", "synthesize", "review"]
 ANSWER = ReviewDecision(action="answer", answer="customer means the $731.50 refund requested Oct 6")
 
 
@@ -53,8 +53,8 @@ def test_decision_shapes():
 ])
 def test_can_answer_truth_table(ds, sections, route, followups, expected):
     _, final, *_ = run(ds, sections, FakeAccountAgent(account_state(oracle_findings(ds.scenarios["S-02"]))))
-    state = {**final, "gate": final["gate"].model_copy(update={"route": route}), "followups": followups}
-    assert build_request(state, "S-02", MAX_FOLLOWUPS).can_answer is expected
+    state = {**final, "synthesis": final["synthesis"].model_copy(update={"route": route}), "followups": followups}
+    assert build_request(state, "S-02", MAX_FOLLOWUPS, None).can_answer is expected
 
 
 def test_with_answer():
@@ -66,7 +66,8 @@ def test_pause_payload_s02(ds, sections):
     out = start(graph, "A-1002", ds.scenarios["S-02"].rep_message, "t-s02", ["t"], "S-02")
     assert isinstance(out, Pause) and out.thread_id == "t-s02"
     r = out.request
-    assert r.thread_label == "S-02" and r.route == "adjustment_review" and r.can_answer is False and r.gate_rejected is False
+    assert r.thread_label == "S-02" and r.route == "adjustment_review" and r.can_answer is False and r.existing_case_id is None
+    assert not {"gate_rejected", "gate_reasons"} & set(r.model_dump())
     assert r.draft["review_route"] == "adjustment_review" and (r.account_attempts, r.policy_attempts, r.followups) == (1, 1, 0)
     assert thread_status(graph, "t-s02") == "paused"
 
@@ -77,17 +78,27 @@ def test_pause_payload_s15(ds, sections):
     assert out.request.open_questions == ["which refund?"]
 
 
-def test_approve_files_gate_route(ds, sections):
+def test_pause_shows_open_duplicate_s11(ds, sections):
+    """S-11 has open case C-002 for the same dispute: the rep sees it at the pause, and approving files nothing new."""
+    s = ds.scenarios["S-11"]
+    graph = graph_for(ds, sections, "S-11", FakeAccountAgent(account_state(oracle_findings(s))))
+    out = start(graph, s.account_id, s.rep_message, "t-s11", [], "S-11")
+    assert out.request.existing_case_id == "C-002"
+    done = resume(graph, "t-s11", APPROVE, [], "S-11")
+    assert done.case.case_id == "C-002" and done.case.created is False
+
+
+def test_approve_files_recommended_route(ds, sections):
     order, final, *_ = run(ds, sections, FakeAccountAgent(account_state(oracle_findings(ds.scenarios["S-02"]))))
     assert order == NORMAL and final["review"].action == "approve"
-    assert final["case"].route == final["gate"].route == "adjustment_review"
+    assert final["case"].route == final["synthesis"].route == "adjustment_review"
 
 
 def test_override_files_rep_route(ds, sections):
     override = ReviewDecision(action="override", route="manual_escalation", reason="customer disputes the call record")
     order, final, *_ = run(ds, sections, FakeAccountAgent(account_state(oracle_findings(ds.scenarios["S-02"]))), decisions=[override])
     assert order == NORMAL and final["case"].route == "manual_escalation"
-    assert final["gate"].route == "adjustment_review" and final["review"].reason == "customer disputes the call record"
+    assert final["synthesis"].route == "adjustment_review" and final["review"].reason == "customer disputes the call record"
 
 
 def test_answer_reruns_account_agent_once(ds, sections):

@@ -1,9 +1,9 @@
-"""review: the human pause after the gate. No LLM; the rep decides and code records.
+"""review: the human pause after synthesize. No LLM; the rep decides and code records.
 
-The graph stops at the `review` node (a LangGraph interrupt) and hands the caller a `ReviewRequest`: the route,
-the gate's verdict, the draft and its open questions. The rep answers with a `ReviewDecision`:
+The graph stops at the `review` node (a LangGraph interrupt) and hands the caller a `ReviewRequest`: the
+recommended route, any open duplicate case, the draft and its open questions. The rep answers with a `ReviewDecision`:
 
-    approve   file the case under the gate's route
+    approve   file the case under the recommended route
     override  file it under another route, with a reason
     answer    only when the route is need_more_evidence and no follow-up is used yet: the answer is added to the
               complaint and the Account Agent looks again once (docs/plans/human-review.md, H1-H3)
@@ -26,10 +26,8 @@ class ReviewRequest(BaseModel):
     """What the rep sees at the pause. JSON-serializable: it is the interrupt payload."""
 
     thread_label: str
-    route: Route  # the gate's route
-    gate_rejected: bool
-    gate_reasons: list[str]
-    existing_case_id: str | None
+    route: Route  # the recommended route: the draft's, or manual_escalation when there is no draft
+    existing_case_id: str | None  # an open case for the same dispute; approving files nothing new
     draft: dict[str, Any] | None  # None when synthesize failed
     open_questions: list[str]
     can_answer: bool  # route is need_more_evidence and the one follow-up is unused
@@ -69,18 +67,16 @@ class Pause(BaseModel):
 APPROVE = ReviewDecision(action="approve")
 
 
-def build_request(s: dict[str, Any], label: str, max_followups: int) -> ReviewRequest:
+def build_request(s: dict[str, Any], label: str, max_followups: int, existing_case_id: str | None) -> ReviewRequest:
     """Render the pause payload from graph state. Reads only: the review node re-runs this on every resume."""
-    g, draft = s["gate"], s["synthesis"].draft
+    route, draft = s["synthesis"].route, s["synthesis"].draft
     return ReviewRequest(
         thread_label=label,
-        route=g.route,
-        gate_rejected=g.gate_rejected,
-        gate_reasons=g.gate_reasons,
-        existing_case_id=g.existing_case_id,
+        route=route,
+        existing_case_id=existing_case_id,
         draft=draft.model_dump(mode="json") if draft else None,
         open_questions=draft.open_questions if draft else [],
-        can_answer=g.route == "need_more_evidence" and s["followups"] < max_followups,
+        can_answer=route == "need_more_evidence" and s["followups"] < max_followups,
         account_attempts=s["account_attempts"],
         policy_attempts=s["policy_attempts"],
         followups=s["followups"],

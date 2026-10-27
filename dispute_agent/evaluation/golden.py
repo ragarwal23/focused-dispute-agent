@@ -24,7 +24,6 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from dispute_agent.account_agent.agent import AccountFindings, OtherAccountMatch
 from dispute_agent.account_agent.derive import derive_states
 from dispute_agent.data import Dataset, Scenario, load_dataset
-from dispute_agent.gate.gate import gate
 from dispute_agent.orchestrator.run import Investigation
 from dispute_agent.policy_agent.agent import PolicyFindings, RuleReading
 from dispute_agent.policy_agent.retrieve import PolicySection, RetrievedSection
@@ -189,10 +188,9 @@ def investigation(
         rules=[RuleReading(section_id=i, condition="per key", outcome="fee_adjustment_review", why="per key", policy_ambiguous=False) for i in case.expected_policy_ids],
     )
     synced = sync(account, policy, derived, case.expected_category, sections)
-    synthesis = SynthesisResult(draft=draft) if draft else SynthesisResult(errors=["no draft"])
-    g = gate(draft, case.account_id, case.expected_category, derived, policy, sections, ds)
-    filed = create_review_case(ds, case.account_id, case.expected_category, derived, g)
-    return Investigation(case.expected_category, account, derived, policy, synced, synthesis, g, filed, attempts)
+    synthesis = SynthesisResult(draft=draft, route=draft.review_route) if draft else SynthesisResult(errors=["no draft"])
+    filed = create_review_case(ds, case.account_id, case.expected_category, derived, synthesis.route)
+    return Investigation(case.expected_category, account, derived, policy, synced, synthesis, filed, attempts)
 
 
 def golden_echo(ds: Dataset, sections: dict[str, PolicySection], case: Scenario) -> Investigation:

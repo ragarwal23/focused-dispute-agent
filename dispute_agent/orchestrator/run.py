@@ -18,7 +18,6 @@ from langgraph.types import Command
 
 from dispute_agent.account_agent.derive import DerivedFacts
 from dispute_agent.data import Category, Dataset
-from dispute_agent.gate.gate import GateResult
 from dispute_agent.orchestrator.graph import GraphState, build_graph, initial_graph_state
 from dispute_agent.policy_agent.agent import PolicyFindings
 from dispute_agent.policy_agent.retrieve import PolicySection
@@ -38,7 +37,6 @@ class Investigation:
     policy: PolicyFindings
     sync: SyncResult
     synthesis: SynthesisResult
-    gate: GateResult
     case: CaseResult
     account_attempts: int = 1  # 2 when sync sent the Account Agent back
     policy_attempts: int = 1  # 2 when sync re-ran the Policy Agent on the disputed event's date
@@ -49,7 +47,7 @@ class Investigation:
     @classmethod
     def from_state(cls, s: GraphState, thread_id: str = "") -> Investigation:
         return cls(
-            s["category"], s["account"], s["derived"], s["policy"], s["sync"], s["synthesis"], s["gate"], s["case"],
+            s["category"], s["account"], s["derived"], s["policy"], s["sync"], s["synthesis"], s["case"],
             s["account_attempts"], s["policy_attempts"], s["review"], s["followups"], thread_id,
         )
 

@@ -33,19 +33,17 @@ The policies use business language, not route names. The mapping the synthesize 
 | "ask the customer for proof / a bank letter / a statement"; "confirm with them" | `need_more_evidence` |
 | Records plus a section that explains the outcome (fee valid, return normal, refund issued with trace) | `explain_events` |
 
-## Gate registry (D7)
+## Our P1–P7 checks (evaluation only)
 
-Every current section is registered, either to one of our Python checks or as procedural. Procedural sections pass the gate's policy check (they tell a rep what to do, not whether a fee stands). A cited section **not in the registry** (a superseded or unrelated section, or a made-up ID) is rejected and escalates.
+Five Python checks in [`dispute_agent/evaluation/policy_checks.py`](../../dispute_agent/evaluation/policy_checks.py) encode the policy assumptions P1–P7 from structured event fields. They run in the eval, never in the agent: the `policy_consistent` check asks whether P1–P7 rule out the final route, and the golden audit asks the same of every expected route (D7, D10 in `docs/architecture.md`). Citing a superseded or unrelated section (all of LF.v2.\*, all of EX.v1.\*) is scored by the eval's `policy_forbidden_clear` check.
 
-| Check | Policy | Sections |
-|---|---|---|
-| `late_fee_unwarranted` | P1, P2, P3 | LF.v3.s1, LF.v3.s2, LF.v3.s4 |
-| `lender_side_failure` | P5 | LF.v3.s3, LF.v3.s5, AP.v1.s5, RR.v1.s7 |
-| `customer_cancelled_autopay` | P6 | AP.v1.s4 |
-| `return_fee_valid` | P4 | RR.v1.s2, RR.v1.s3 |
-| `refund_overdue` | P7 | RF.v1.s2, RF.v1.s4 |
-| procedural | — | LF.v3.s6, LF.v3.s7, LF.v3.s8, AP.v1.s1–s3, AP.v1.s6, RR.v1.s1, RR.v1.s4–s6, RR.v1.s8, RF.v1.s1, RF.v1.s3, RF.v1.s5, RF.v1.s6 |
-| not registered (trap) | — | all of LF.v2.\*, all of EX.v1.\* |
+| Check | Policy | Encodes sections | A true result rules out |
+|---|---|---|---|
+| `late_fee_unwarranted` | P1, P2, P3 | LF.v3.s1, LF.v3.s2, LF.v3.s4 | `explain_events` |
+| `lender_side_failure` | P5 | LF.v3.s3, LF.v3.s5, AP.v1.s5, RR.v1.s7 | `explain_events` |
+| `customer_cancelled_autopay` | P6 | AP.v1.s4 | `adjustment_review` |
+| `return_fee_valid` | P4 | RR.v1.s2, RR.v1.s3 | `adjustment_review` |
+| `refund_overdue` | P7 | RF.v1.s2, RF.v1.s4 | `explain_events` |
 
 `refund_overdue` counts business days as Monday–Friday excluding federal holidays. Labor Day (Sep 7) and Columbus Day (Oct 12) fall inside the data window.
 

@@ -110,3 +110,61 @@ rate) and the eight ad-hoc complaints ($0.53, measured) bring the total to ≈ $
   synthesize retry on a schema rejection, which needs its own plan.
 - **S-02 classification flake.** One run in three classified it `missing_payment`; the route held. Recorded.
 - **S-11 route miss** (known): the model routes `explain_events` where the key wants `need_more_evidence`.
+
+---
+
+# Gate removed (v0.8) — 2026-10-27
+
+## What changed and what was run
+
+The runtime gate node was removed ([plan](../tasks/remove-gate.md), architecture D10): the recommended route is now the
+draft's, or `manual_escalation` when synthesize returns no draft, and our P1–P7 checks run in the eval as
+`policy_consistent` and a golden-label audit. Before removal, the 43 eval reports in `runs/` held 279 scored rows; the
+gate rejected 8 drafts (S-03 ×4, S-07 ×2, S-10, S-14) and in every one the draft had already chosen
+`manual_escalation` or there was no draft, so it never changed a route. A backtest of `policy_consistent` over the 196
+of those rows that carry findings found 0 inconsistent routes.
+
+Offline: `pytest -q` 256 passed; `python -m dispute_agent.evaluation.policy_checks` 16/16 `ok` (no golden route is ruled
+out by P1–P7); `eval --producer golden_echo --split all` grade PASS 16/16 with `policy_consistent` 16/16; the web app
+builds (`npm run build`).
+
+Live: three dev passes, `eval_20261027T182359Z.json`, `T182756Z.json`, `T183153Z.json`, each exit 0, then
+`stability --known S-11:route_ok`, the same rule and known set as the F1b matrix above.
+
+## Results
+
+`stability` exited 0. **Every cell was 3/3 except S-11 `route_ok` 0/3 (the known miss)**, including the new
+`policy_consistent` 12/12 on all three. The F1b matrix had four cells at 2/3; this one has none.
+
+| Pass | Route accuracy | Disputed-event accuracy | Policy-citation recall | `policy_consistent` | Grade PASS | Send-backs / re-retrieves / exceptions |
+|---|---|---|---|---|---|---|
+| T182359Z | 11/12 | 12/12 | 12/12 | 12/12 | 11/12 | 0 / 0 / 0 |
+| T182756Z | 11/12 | 12/12 | 12/12 | 12/12 | 11/12 | 0 / 0 / 0 |
+| T183153Z | 11/12 | 12/12 | 12/12 | 12/12 | 11/12 | 0 / 0 / 0 |
+| F1b passes, for comparison | 11/12 each | 12, 12, 11 of 12 | 12, 12, 11 of 12 | (not measured) | — | 0 / 0 / 0 |
+
+The confusion matrix was identical on all three and identical to F1b's: the only off-diagonal cell is S-11
+(`need_more_evidence` → `explain_events`).
+
+Release workbook [`release_2026-10-27_no-gate.xlsx`](../dispute_agent/evaluation/reports/release_2026-10-27_no-gate.xlsx)
+renders pass T183153Z with a `Compare` sheet against the phase 2 release capture (`eval_20261027T174341Z.json`) over
+the 12 dev scenarios: route 10 → 11, evidence, policy and confidence 11 → 12, grade 10 → 11. All four changes are S-07,
+which wrote no draft in the release capture and wrote a correct one in all three passes here. **That is run-to-run
+variance in synthesize, not an effect of this change**: synthesize runs before the point where the gate was, so
+removing the gate cannot change what it writes. S-07's no-draft failure is now seen in 3 of 8 runs since F1b. It
+remains the open finding below; the one-retry fix still needs its own plan.
+
+Cost: 36 live scenario runs at the previously observed $0.05–0.07 each, about $2.15. No judge run.
+
+## Notes
+
+- **The ID guarantee is now complete.** With nothing shown, a schema cannot say "no IDs", so `draft_schema` falls
+  back to plain strings; the gate used to catch an invented ID there. `run_synthesize` now rejects any ID that was not
+  shown, so an off-account or unshown citation is impossible in every case, and the run falls back to
+  `manual_escalation`.
+- **The `route` axis keeps a PARTIAL.** A route that is right only because there was no draft scores PARTIAL, as
+  "right only because the gate rejected" did before, so an empty answer still cannot score a clean PASS on the
+  `manual_escalation` scenarios (`empty_stub` grades FAIL on all 16).
+- **Trace shapes.** The graph now has one node fewer (`... > sync > synthesize > review`). `trace --last 12`, run
+  minutes after the passes, saw only the first five new roots: LangSmith had not yet ingested the later runs. Those five
+  matched the new shape; the other seven were older gate-era roots and reported the expected mismatch.

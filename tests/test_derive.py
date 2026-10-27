@@ -28,6 +28,10 @@ def oracle_findings(s: Scenario) -> AccountFindings:
     )
 
 
+def oracle_derived(ds, s: Scenario):
+    return derive_states(oracle_findings(s), s.expected_category, s.account_id, ds)
+
+
 @pytest.mark.parametrize("sid", DEV_IDS)
 def test_derive_matches_key(ds, sid):
     s = ds.scenarios[sid]

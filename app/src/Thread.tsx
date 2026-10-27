@@ -4,12 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import { api, ROUTES, ROUTE_LABEL, type Decision, type ReviewRequest, type ResultEvent, type Route } from "./api";
 import { activePause, type AssistantTurn, type Step, type ThreadState, type Turn } from "./App";
 
-const PHASES = ["Reading", "Investigating", "Drafting", "Checking"];
-const PHASE_OF: Record<string, number> = { classify: 0, synthesize: 2, gate: 3, review: 4, create_review_case: 4 };
+const PHASES = ["Reading", "Investigating", "Drafting"];
+const PHASE_OF: Record<string, number> = { classify: 0, synthesize: 2, review: 3, create_review_case: 3 };
 
-/** Where the assistant is: the phase of its latest step, or 4 once it has answered. */
+/** Where the assistant is: the phase of its latest step, or 3 (all done) once it has answered. */
 function phaseOf(t: AssistantTurn): number {
-  if (t.pause || t.result) return 4;
+  if (t.pause || t.result) return 3;
   const last = t.steps.filter((s) => !s.parent).at(-1);
   return last ? PHASE_OF[last.key] ?? 1 : 0;
 }
@@ -66,13 +66,10 @@ function Recommendation({ req, live, onDecide }: { req: ReviewRequest; live: boo
     <div className="answer">
       <div className="route-line">
         <span className="eyebrow">Recommended route</span>
-        {req.gate_rejected && d && d.review_route !== req.route && <s className="route old">{ROUTE_LABEL[d.review_route]}</s>}
         <strong className="route">{ROUTE_LABEL[req.route]}</strong>
         {d && <span className="pill-soft">{d.confidence} confidence</span>}
-        <span className={`flag ${req.gate_rejected ? "warn" : "ok"}`}>{req.gate_rejected ? "Policy check overrode the draft" : "Policy check passed"}</span>
       </div>
       {!d && <p className="alert">I could not write a draft for this one, so it goes to manual escalation.</p>}
-      {req.gate_rejected && <ul className="reasons">{req.gate_reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
       {req.existing_case_id && <p className="alert">An open case already exists: <code>{req.existing_case_id}</code>. Approving files nothing new.</p>}
       {d && <p className="note">{d.case_note}</p>}
       {req.open_questions.length > 0 && (

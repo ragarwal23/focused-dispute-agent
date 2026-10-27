@@ -34,7 +34,7 @@ def test_render_blocks_present(ds):
     assert text.startswith(f"Complaint: {CASES['S-01'].rep_message}\nCategory: late_fee_autopay\nExpected route (answer key): explain_events")
     assert f"Golden rationale (answer key): {CASES['S-01'].rationale}" in text and "Account memo: none" in text
     assert '"event_id": "E-0081"' in text and "- AP.v1.s4 | explains_outcome | ambiguous=false | condition: c | why: w" in text
-    assert '"case_note": "The fee stands."' in text and "Gate: route=explain_events rejected=False reasons=[]" in text
+    assert '"case_note": "The fee stands."' in text and "Final route (the draft's, or manual_escalation with no draft): explain_events" in text
     assert "Derived facts:" in text and "evidence_events" not in text.split("Derived facts:")[1].split("\n")[0]
     s04 = render_judge_input(row_for("S-04"), CASES["S-04"], ds)
     assert f"Account memo: {MEMO_OPEN} " in s04  # the injection memo is shown as data, inside the delimiters
@@ -47,7 +47,7 @@ def test_fake_model_scores(ds):
     out = judge_row(row_for("S-01"), CASES["S-01"], ds, model, config={"tags": ["t"]})
     assert out == {a: {"score": 2, "reason": "r", "quote": "q"} for a in JUDGE_AXES} and model.calls == 1
     as_dict = FakeModel(full_scores(3, "").model_dump())
-    assert judge_row(row_for("S-01"), CASES["S-01"], ds, as_dict)["safety"] == {"score": 3, "reason": "r", "quote": ""}
+    assert judge_row(row_for("S-01"), CASES["S-01"], ds, as_dict)["no_leaks_or_promises"] == {"score": 3, "reason": "r", "quote": ""}
 
 
 def test_quote_required_below_3():
@@ -71,7 +71,7 @@ def test_null_draft_not_called(ds):
     out = judge_row(null_draft_row(CASES["S-07"]), CASES["S-07"], ds, model)
     assert out == {a: {"score": 0, "reason": "no draft", "quote": ""} for a in JUDGE_AXES} and model.calls == 0
     out = judge_row({"scenario_id": "S-02", "exception": "KeyError"}, CASES["S-02"], ds, model)
-    assert out["faithfulness"]["reason"] == "no draft (exception)" and model.calls == 0
+    assert out["no_invented_facts"]["reason"] == "no draft (exception)" and model.calls == 0
 
 
 def test_judge_report_writes_sidecar(ds, tmp_path, capsys):
@@ -79,7 +79,7 @@ def test_judge_report_writes_sidecar(ds, tmp_path, capsys):
     out = judge_report(tmp_path / "eval_x.json", data, ds, list(CASES.values()), FakeModel(full_scores(2)), out_dir=tmp_path)
     side = json.loads(out.read_text())
     assert out.name.startswith("judge_") and side["eval_path"] == str(tmp_path / "eval_x.json") and side["judge_model"] == JUDGE_MODEL_ID
-    assert side["rows"]["S-01"]["safety"]["score"] == 2 and side["rows"]["S-07"]["safety"]["score"] == 0 and side["rows"]["S-02"]["safety"]["score"] == 0
+    assert side["rows"]["S-01"]["no_leaks_or_promises"]["score"] == 2 and side["rows"]["S-07"]["no_leaks_or_promises"]["score"] == 0 and side["rows"]["S-02"]["no_leaks_or_promises"]["score"] == 0
     assert "judged 3 scenarios, 0 errors" in capsys.readouterr().out
 
 
@@ -91,18 +91,18 @@ def test_agreement_math():
     judge = judge_rows(**{"S-01": 3, "S-02": 1, "S-03": 2}) | {"S-05": {"judge_error": "boom"}}
     labels = {sid: {a: h for a in JUDGE_AXES} for sid, h in (("S-01", 3), ("S-02", 3), ("S-03", 1), ("S-05", 2))}
     ag = agreement(judge, labels)
-    a = ag["faithfulness"]
+    a = ag["no_invented_facts"]
     assert a["n"] == 3 and a["exact"] == 0.33 and a["within_1"] == 0.67 and a["judge_mean"] == 2.0 and a["human_mean"] == 2.33
     assert a["disagreements"] == [("S-02", 1, 3), ("S-03", 2, 1)]
-    assert agreement_lines(ag)[1].split() == ["faithfulness", "3", "0.33", "0.67", "2.0", "2.33"]
+    assert agreement_lines(ag)[1].split() == ["no_invented_facts", "3", "0.33", "0.67", "2.0", "2.33"]
 
 
 def test_partial_labels():
     judge = judge_rows(**{"S-01": 3, "S-02": 2})
-    labels = {"S-01": {a: 3 for a in JUDGE_AXES}, "S-02": {"faithfulness": None, "reasoning_agreement": 2, "actionability": None, "safety": 2}}
+    labels = {"S-01": {a: 3 for a in JUDGE_AXES}, "S-02": {"no_invented_facts": None, "matches_rationale": 2, "ready_to_file": None, "no_leaks_or_promises": 2}}
     ag = agreement(judge, labels)
-    assert ag["faithfulness"]["n"] == 1 and ag["reasoning_agreement"]["n"] == 2 and ag["actionability"]["within_1"] == 1.0
-    assert agreement(judge, {})["safety"] == {"n": 0, "exact": None, "within_1": None, "judge_mean": None, "human_mean": None, "disagreements": []}
+    assert ag["no_invented_facts"]["n"] == 1 and ag["matches_rationale"]["n"] == 2 and ag["ready_to_file"]["within_1"] == 1.0
+    assert agreement(judge, {})["no_leaks_or_promises"] == {"n": 0, "exact": None, "within_1": None, "judge_mean": None, "human_mean": None, "disagreements": []}
 
 
 def test_labels_build_check_and_exit_codes(ds, tmp_path, capsys):
@@ -124,4 +124,4 @@ def test_labels_build_check_and_exit_codes(ds, tmp_path, capsys):
     wb.save(labels_path)
     assert calibrate_check(judge_path, labels_path) == 0  # n < 6 per axis: no axis can fail the threshold
     out = capsys.readouterr().out
-    assert "below 75% within-1: none" in out and "reasoning_agreement" in out
+    assert "below 75% within-1: none" in out and "matches_rationale" in out

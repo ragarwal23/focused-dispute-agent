@@ -55,11 +55,6 @@ def _policy(r: dict[str, Any]) -> str:
     return f"Policy read: {len(rules)} rules from {len({x.section_id for x in rules})} sections"
 
 
-def _gate(r: dict[str, Any]) -> str:
-    g = r["gate"]
-    return f"Gate: {'overrode the draft' if g.gate_rejected else 'agrees'} → {g.route}"
-
-
 def _review(r: dict[str, Any]) -> str:
     d = r["review"]
     return {"approve": "You approved", "override": f"You overrode the route to {d.route}", "answer": "You answered"}[d.action]
@@ -102,7 +97,6 @@ STEPS: dict[str, Step] = {
         lambda r: f"Policy re-read on {_day(r['policy'].policy_date)}"),
     "synthesize": Step("ai", "Drafting the review case", lambda r: (
         f"Draft written: route {r['synthesis'].draft.review_route}" if r["synthesis"].draft else "The assistant could not write a draft")),
-    "gate": Step("code", "Checking the draft against our policy rules", _gate),
     "review": Step("you", "Waiting for your decision", _review),
     "account_agent_followup": Step("ai", "Looking at the account again with your answer",
                                    lambda r: f"Account records read again ({_lookups(r)})"),
@@ -128,8 +122,6 @@ def _json(content: Any) -> dict[str, Any]:
 
 def _detail(name: str, r: dict[str, Any]) -> str | None:
     """The one extra line under a finished step, where the step has something a rep should see."""
-    if name == "gate" and r["gate"].gate_rejected:
-        return "; ".join(r["gate"].gate_reasons)
     if name == "synthesize" and not r["synthesis"].draft:
         return "; ".join(r["synthesis"].errors) or None
     return None
@@ -184,12 +176,12 @@ def narrate(ns: tuple[str, ...], mode: str, data: Any) -> list[dict[str, Any]]:
 
 
 def result_event(thread_id: str, values: dict[str, Any]) -> dict[str, Any]:
-    """The finished run as the page needs it: the case, who decided, the draft and the gate's verdict. No messages."""
-    g, draft = values["gate"], values["synthesis"].draft
+    """The finished run as the page needs it: the case, who decided, the draft and its recommended route. No messages."""
+    draft = values["synthesis"].draft
     return {
         "type": "result", "thread_id": thread_id,
         "case": values["case"].model_dump(mode="json"),
         "review": values["review"].model_dump(mode="json"),
         "draft": draft.model_dump(mode="json") if draft else None,
-        "gate": {"route": g.route, "gate_rejected": g.gate_rejected, "gate_reasons": g.gate_reasons, "existing_case_id": g.existing_case_id},
+        "route": values["synthesis"].route,
     }

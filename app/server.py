@@ -72,7 +72,7 @@ def make_app(ds: Dataset, sections: dict[str, PolicySection], graph: Any, trace_
     def summary(thread_id: str, snap: Any) -> dict[str, Any]:
         v, waiting = snap.values, pending(snap)
         status = "finished" if not snap.next else "paused" if waiting else "stopped"
-        route = v["case"].route if v.get("case") else v["gate"].route if v.get("gate") else None
+        route = v["case"].route if v.get("case") else v["synthesis"].route if v.get("synthesis") else None
         return {
             "thread_id": thread_id, "label": v.get("thread_label", thread_id), "account_id": v.get("account_id"),
             "status": status, "route": route, "updated_at": snap.created_at, "stopped_at": list(snap.next) if status == "stopped" else [],

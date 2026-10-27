@@ -7,7 +7,7 @@ import pytest
 
 from dispute_agent.evaluation.golden import build_cases
 from dispute_agent.evaluation.metrics import AXES, JUDGE_AXES
-from dispute_agent.evaluation.report import MATRIX_COLS, NO_DRAFT, load_eval, render, write_report
+from dispute_agent.evaluation.report import CASE_COLS, MATRIX_COLS, NO_DRAFT, case_row, consistent, load_eval, render, write_report
 from dispute_agent.__main__ import main
 from test_metrics import ALL_OK
 
@@ -25,7 +25,6 @@ def normal_row(s):
         "sync": {"issues": []},
         "draft": {"review_route": s.expected_route, "event_ids": ["E-0081", "E-0117"], "policy_source_ids": ["AP.v1.s4", "LF.v3.s4"],
                   "confidence": "high", "open_questions": [], "case_note": "The fee stands."},
-        "gate": {"route": s.expected_route, "gate_rejected": False, "gate_reasons": []},
         "tool_errors": [],
     }
 
@@ -33,9 +32,8 @@ def normal_row(s):
 def null_draft_row(s):
     row = normal_row(s)
     row.update(draft=None, case={"case_id": "C-005", "created": True, "route": "manual_escalation"},
-               findings={"relevant_event_ids": ["E-0157", "E-0135"], "disputed_event_id": None, "candidate_event_ids": [], "summary": "x"},
-               gate={"route": "manual_escalation", "gate_rejected": True, "gate_reasons": ["no draft"]})
-    row["checks"].update(synth_errors=["synthesize failed: parse"], draft_route=None, gate_rejected=True, route_ok=True,
+               findings={"relevant_event_ids": ["E-0157", "E-0135"], "disputed_event_id": None, "candidate_event_ids": [], "summary": "x"})
+    row["checks"].update(synth_errors=["synthesize failed: parse"], draft_route=None, route_final="manual_escalation", route_ok=True,
                          draft_events_ok=False, draft_policy_ok=False, confidence_ok=False)
     return row
 
@@ -111,7 +109,7 @@ def test_sheets_and_titles(workbook, ds):
     assert t["tool_calls_made"] == (None, 3) and t["account_summary"] == (None, "cancelled autopay, fee stands")
     assert "thread_id" not in t  # the eval JSON never stores a thread ID (commit 372b170)
     cases = {r[1]: r for r in workbook["Cases"].iter_rows(min_row=2, values_only=True)}
-    assert cases["S-01"][7:] == ("explain_events", "explain_events", "E-0117", "E-0117", "no", "yes", "a1/p1", "OK")
+    assert cases["S-01"][7:] == ("explain_events", "explain_events", "E-0117", "E-0117", "ok", "yes", "a1/p1", "OK")
     assert cases["S-04"][2] == "heldout" and len(cases) == 16
 
 
@@ -120,18 +118,18 @@ def test_null_draft_row(workbook):
     assert t["route"] == ("manual_escalation", "manual_escalation") and t["draft_route"] == (None, NO_DRAFT)
     assert t["rationale / case_note"][1] == NO_DRAFT and t["confidence"] == (None, None) and t["open_questions"] == (None, None)
     assert t["forbidden_event_ids / cited anywhere by the Account Agent"] == ("E-0135", "E-0135")
-    assert t["gate_reasons"] == (None, "no draft")
+    assert t["synth_errors"] == (None, "synthesize failed: parse")
     v = verdicts(workbook["S-07"])
     assert v["route"] == "PARTIAL" and v["required_event_ids / cited_event_ids"] == "FAIL" and v["confidence"] == "FAIL"
     cases = {r[1]: r for r in workbook["Cases"].iter_rows(min_row=2, values_only=True)}
-    assert cases["S-07"][8] == "manual_escalation" and cases["S-07"][11:] == ("yes", "yes", "a1/p1", "OK")
+    assert cases["S-07"][8] == "manual_escalation" and cases["S-07"][11:] == ("ok", "yes", "a1/p1", "OK")
 
 
 def test_exception_row(workbook, ds):
     t = table(workbook["S-02"])
     assert t["route"] == ("adjustment_review", "EXCEPTION: KeyError: 'x'")
     assert t["rationale / case_note"] == (ds.scenarios["S-02"].rationale, "EXCEPTION: KeyError: 'x'")
-    assert t["gate_reasons"] == (None, None)
+    assert t["synth_errors"] == (None, None)
     assert set(verdicts(workbook["S-02"])[k] for k in ("route", "category", "confidence")) == {"FAIL"}
     cases = {r[1]: r for r in workbook["Cases"].iter_rows(min_row=2, values_only=True)}
     assert cases["S-02"][8] is None and cases["S-02"][-1] == "EXCEPTION"
@@ -157,10 +155,10 @@ def test_rejects_non_report(tmp_path, capsys):
 
 def test_matrix_and_slices(workbook):
     m = matrix(workbook)
-    assert m["S-01"]["Grade"] == "PASS" and m["S-01"]["Score"] == "6/6" and m["S-01"]["Gate"] == "ok" and m["S-01"]["Note"] == "no"
-    assert m["S-07"]["route"] == "PARTIAL" and m["S-07"]["Grade"] == "FAIL" and m["S-07"]["Score"] == "2.5/6" and m["S-07"]["Gate"] == "rejected"
-    assert m["S-02"]["Grade"] == "FAIL" and m["S-02"]["Gate"] == "—" and m["S-03"]["Grade"] == "PENDING" and m["S-03"]["route"] is None
-    assert m["S-01"]["faithfulness"] is None and m["S-01"]["Judge mean"] is None
+    assert m["S-01"]["Grade"] == "PASS" and m["S-01"]["Score"] == "6/6" and m["S-01"]["P1-P7"] == "ok" and m["S-01"]["Note"] == "no"
+    assert m["S-07"]["route"] == "PARTIAL" and m["S-07"]["Grade"] == "FAIL" and m["S-07"]["Score"] == "2.5/6" and m["S-07"]["P1-P7"] == "ok"
+    assert m["S-02"]["Grade"] == "FAIL" and m["S-02"]["P1-P7"] == "—" and m["S-03"]["Grade"] == "PENDING" and m["S-03"]["route"] is None
+    assert m["S-01"]["no_invented_facts"] is None and m["S-01"]["Judge mean"] is None
     assert m["total"]["route"] == "1/3" and m["total"]["Grade"] == "1/3" and m["total"]["guardrails"] == "2/3"
     ws = workbook["Verdict Matrix"]
     assert ws["E2"].fill.fgColor.rgb.endswith("C6EFCE") and ws["K3"].fill.fgColor.rgb.endswith("FFC7CE")
@@ -199,13 +197,13 @@ def test_judge_panel_and_err(ds, tmp_path, json_path):
     assert render(str(json_path), str(out), judge=str(judge_path)) == 0
     wb = openpyxl.load_workbook(out)
     panel = {r[0]: r[1:] for r in wb["S-01"].iter_rows(values_only=True) if r[0] in JUDGE_AXES}
-    assert panel["safety"] == (1, "r", "q") and panel["faithfulness"][0] == 3
+    assert panel["no_leaks_or_promises"] == (1, "r", "q") and panel["no_invented_facts"][0] == 3
     s07 = [r for r in wb["S-07"].iter_rows(values_only=True) if r[0] == "ERR"]
     assert s07 == [("ERR", None, "RuntimeError: boom", None)]
     assert [r for r in wb["S-02"].iter_rows(values_only=True) if r[0] == "not judged"]
     m = matrix(wb)
-    assert m["S-01"]["safety"] == 1 and m["S-01"]["Judge mean"] == 2.25 and m["S-07"]["safety"] == "ERR" and m["S-07"]["Judge mean"] is None
-    assert m["total"]["safety"] == 1.0 and m["total"]["Judge mean"] == 2.25
+    assert m["S-01"]["no_leaks_or_promises"] == 1 and m["S-01"]["Judge mean"] == 2.25 and m["S-07"]["no_leaks_or_promises"] == "ERR" and m["S-07"]["Judge mean"] is None
+    assert m["total"]["no_leaks_or_promises"] == 1.0 and m["total"]["Judge mean"] == 2.25
     assert "Calibration" not in wb.sheetnames and dict(wb["Run"].iter_rows(values_only=True))["judge_path"] == "claude-opus-5-5 via judge sidecar"
 
 
@@ -238,5 +236,15 @@ def test_calibration_sheet(ds, tmp_path, json_path, capsys):
     wb.save(labels_path)
     assert render(str(json_path), str(out), judge=str(judge_path), labels=str(labels_path)) == 0
     cal = [trim(r) for r in openpyxl.load_workbook(out)["Calibration"].iter_rows(values_only=True) if r[0]]
-    assert cal[0] == ("axis", "n", "exact", "within-1", "judge mean", "human mean") and cal[1] == ("faithfulness", 1, 1.0, 1.0, 3.0, 3.0)
-    assert ("S-01", "safety", 1, 3) in cal and ("S-01", "reasoning_agreement", 2, 3) in cal
+    assert cal[0] == ("axis", "n", "exact", "within-1", "judge mean", "human mean") and cal[1] == ("no_invented_facts", 1, 1.0, 1.0, 3.0, 3.0)
+    assert ("S-01", "no_leaks_or_promises", 1, 3) in cal and ("S-01", "matches_rationale", 2, 3) in cal
+
+
+def test_old_format_row(ds):
+    """A report made before v0.8 (a `gate` key, no policy_consistent) still renders: the route comes from checks."""
+    old = normal_row(ds.scenarios["S-01"])
+    old["gate"] = {"route": "explain_events", "gate_rejected": False, "gate_reasons": []}
+    del old["checks"]["policy_consistent"]
+    assert consistent(old) is None and consistent(normal_row(ds.scenarios["S-01"])) == "ok"
+    assert case_row(1, ds.scenarios["S-01"], old)[8:12] == ["explain_events", "E-0117", "E-0117", None]
+    assert "policy_consistent" in CASE_COLS and "gate_rejected" not in CASE_COLS

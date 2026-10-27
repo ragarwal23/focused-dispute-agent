@@ -26,9 +26,9 @@ from dispute_agent.evaluation.metrics import (
 RUN_KEYS = ("json_path", "captured_at", "model_id", "producer", "split", "scenarios", "exceptions", "golden_path", "judge_path", "before_path")
 CASE_COLS = [
     "#", "scenario_id", "split", "trap", "wording", "note_driven", "complaint", "golden_route", "actual_route",
-    "golden_disputed", "actual_disputed", "gate_rejected", "case_created", "attempts", "status",
+    "golden_disputed", "actual_disputed", "policy_consistent", "case_created", "attempts", "status",
 ]
-MATRIX_COLS = ["Q", "Trap", "Wording", "Note", *AXES, "Grade", "Score", *JUDGE_AXES, "Judge mean", "Gate", "Attempts"]
+MATRIX_COLS = ["Q", "Trap", "Wording", "Note", *AXES, "Grade", "Score", *JUDGE_AXES, "Judge mean", "P1-P7", "Attempts"]
 LABEL_COLS = ["scenario_id", "trap", "complaint", "expected_route", "rationale", "actual_route", "case_note", "open_questions", *JUDGE_AXES, "notes"]
 FORBIDDEN_CITED = "forbidden_event_ids / cited anywhere by the Account Agent"
 FIELD_AXIS = {  # which axis governs each golden field's verdict cell
@@ -68,6 +68,12 @@ def yes(v: Any) -> str:
     return "yes" if v else "no"
 
 
+def consistent(row: dict[str, Any]) -> str | None:
+    """`policy_consistent` as ok / ruled out; None for reports made before the check existed (v0.8)."""
+    v = (row.get("checks") or {}).get("policy_consistent")
+    return None if v is None else "ok" if v else "ruled out"
+
+
 def fill(c, verdict: Any) -> None:
     if verdict in FILLS:
         c.fill = PatternFill("solid", fgColor=FILLS[verdict])
@@ -81,11 +87,11 @@ def cited_by_account_agent(row: dict[str, Any]) -> set[str]:
 
 def actual_fields(case: Case, row: dict[str, Any]) -> dict[str, Any]:
     """The `actual` column of a scenario sheet, keyed by the golden field it sits beside."""
-    draft, gate, derived, filed = row.get("draft"), row.get("gate") or {}, row.get("derived") or {}, row.get("case") or {}
+    draft, checks, derived, filed = row.get("draft"), row.get("checks") or {}, row.get("derived") or {}, row.get("case") or {}
     forbidden_cited = sorted(set(case.expected_forbidden_event_ids) & cited_by_account_agent(row))
     return {
         "category": row.get("category_pred"),
-        "route": gate.get("route"),
+        "route": checks.get("route_final"),
         "draft_route": draft["review_route"] if draft else NO_DRAFT,
         "disputed_event_id": (row.get("findings") or {}).get("disputed_event_id"),
         "required_event_ids / cited_event_ids": cell(draft["event_ids"]) if draft else NO_DRAFT,
@@ -114,9 +120,9 @@ def golden_fields(case: Case) -> dict[str, Any]:
 
 
 def run_detail(row: dict[str, Any]) -> list[tuple[str, Any]]:
-    checks, gate, sync = row.get("checks") or {}, row.get("gate") or {}, row.get("sync") or {}
+    checks, sync = row.get("checks") or {}, row.get("sync") or {}
     return [
-        ("gate_reasons", cell(gate.get("gate_reasons"))), ("sync_issues", cell(sync.get("issues"))),
+        ("synth_errors", cell(checks.get("synth_errors"))), ("sync_issues", cell(sync.get("issues"))),
         ("account_summary", (row.get("findings") or {}).get("summary")), ("tool_calls_made", checks.get("tool_calls")),
         ("tool_errors", cell(row.get("tool_errors"))), ("account_attempts", row.get("account_attempts")),
         ("policy_attempts", row.get("policy_attempts")),
@@ -180,10 +186,10 @@ def case_row(n: int, case: Case, row: dict[str, Any] | None) -> list[Any]:
         return base + [None, case.expected_disputed_event_id, None, None, None, None, "PENDING"]
     if "exception" in row:
         return base + [None, case.expected_disputed_event_id, None, None, None, None, "EXCEPTION"]
-    gate, filed = row.get("gate") or {}, row.get("case") or {}
+    filed = row.get("case") or {}
     return base + [
-        gate.get("route"), case.expected_disputed_event_id, (row.get("findings") or {}).get("disputed_event_id"),
-        yes(gate.get("gate_rejected")), yes(filed.get("created")),
+        (row.get("checks") or {}).get("route_final"), case.expected_disputed_event_id,
+        (row.get("findings") or {}).get("disputed_event_id"), consistent(row), yes(filed.get("created")),
         f"a{row.get('account_attempts', '?')}/p{row.get('policy_attempts', '?')}", "OK",
     ]
 
@@ -195,9 +201,9 @@ def matrix_row(case: Case, row: dict[str, Any] | None, judge: dict[str, Any] | N
     verdicts = row_verdicts(row)
     scores = judge_scores(judge["rows"].get(case.scenario_id)) if judge else {a: None for a in JUDGE_AXES}
     judge_cells = [("ERR" if judge and s is None else s) for s in scores.values()]
-    gate = "—" if "exception" in row else ("rejected" if (row.get("gate") or {}).get("gate_rejected") else "ok")
+    cons = "—" if "exception" in row else consistent(row)
     return base + [verdicts[a] for a in AXES] + [grade(verdicts), score_str(verdicts)] + judge_cells + [
-        judge_mean(scores) if judge else None, gate, f"a{row.get('account_attempts', '?')}/p{row.get('policy_attempts', '?')}",
+        judge_mean(scores) if judge else None, cons, f"a{row.get('account_attempts', '?')}/p{row.get('policy_attempts', '?')}",
     ]
 
 
@@ -284,8 +290,8 @@ def build_labels(data: dict[str, Any], cases: list[Case], out: Path) -> int:
         row = rows.get(case.scenario_id)
         if case.split != "dev" or row is None:
             continue
-        draft, gate = row.get("draft"), row.get("gate") or {}
-        ws.append([case.scenario_id, case.trap, case.rep_message, case.expected_route, case.rationale, gate.get("route"),
+        draft, route = row.get("draft"), (row.get("checks") or {}).get("route_final")
+        ws.append([case.scenario_id, case.trap, case.rep_message, case.expected_route, case.rationale, route,
                    draft["case_note"] if draft else NO_DRAFT, "\n".join(draft.get("open_questions") or []) if draft else None])
         n += 1
     dv = DataValidation(type="list", formula1='"0,1,2,3"', allow_blank=True)

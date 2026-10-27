@@ -106,7 +106,7 @@ def _print_tool_calls(account: dict[str, Any], quiet: bool) -> None:
 
 def _print_sections(v: dict[str, Any], quiet: bool) -> None:
     """Print what each step produced, read from the graph's state (there is no Investigation yet at a pause)."""
-    account, policy, g = v["account"], v["policy"], v["gate"]
+    account, policy = v["account"], v["policy"]
     print(f"category: {v['category']}\n")
     _print_tool_calls(account, quiet)
     print("\nfindings:")
@@ -133,15 +133,7 @@ def _print_sections(v: dict[str, Any], quiet: bool) -> None:
         print(json.dumps(v["synthesis"].draft.model_dump(), indent=2))
     else:
         print(f"none: {v['synthesis'].errors}")
-
-    print("\ngate (code):")
-    print(f"route={g.route} gate_rejected={g.gate_rejected} reasons={g.gate_reasons} existing_case_id={g.existing_case_id}")
-    print("checks:         " + "  ".join(f"{k}={v}" for k, v in g.check_results.items()))
-    cited = []
-    for c in g.section_checks:
-        line = f"{c.section_id} {c.check}" + (f"={c.result}" if c.result else "")
-        cited.append(line + (f" rules out {c.rules_out}" if c.rules_out else ""))
-    print("cited sections: " + (" · ".join(cited) or "none"))
+    print(f"recommended route: {v['synthesis'].route}")
 
 
 def _print_outcome(out: Investigation | Pause) -> None:
@@ -153,9 +145,10 @@ def _print_outcome(out: Investigation | Pause) -> None:
         return
     r, t = out.request, out.thread_id
     used = f"  (answers used: {r.followups} of {r.followups + int(r.can_answer)})" if r.followups else ""
-    gate = "gate rejected: " + "; ".join(r.gate_reasons) if r.gate_rejected else "gate ok"
+    draft = "" if r.draft else " (no draft)"
+    existing = f"  open case {r.existing_case_id}: approving files nothing new" if r.existing_case_id else ""
     questions = f"  open questions: {' | '.join(r.open_questions)}" if r.open_questions else ""
-    print(f"\npaused for review: thread {t}{used}\n  route {r.route} ({gate}){questions}")
+    print(f"\npaused for review: thread {t}{used}\n  route {r.route}{draft}{existing}{questions}")
     print(f"  resume with:  resume {t} --approve\n{'':16}resume {t} --route <route> --reason \"...\"")
     if r.can_answer:
         print(f"{'':16}resume {t} --answer \"...\"")
@@ -298,7 +291,7 @@ def main(argv: list[str] | None = None) -> int:
     res.add_argument("thread_id")
     res.add_argument("--quiet", action="store_true", help="hide tool results, show only the calls")
     decide = res.add_mutually_exclusive_group(required=True)
-    decide.add_argument("--approve", action="store_true", help="file the case under the gate's route")
+    decide.add_argument("--approve", action="store_true", help="file the case under the recommended route")
     decide.add_argument("--route", choices=get_args(Route), help="file it under this route instead (needs --reason)")
     decide.add_argument("--answer", help="answer the open questions; the Account Agent looks again once")
     res.add_argument("--reason", help="why the route was overridden")

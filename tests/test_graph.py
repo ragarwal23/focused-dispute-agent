@@ -15,7 +15,7 @@ from test_derive import oracle_findings
 from test_policy_agent import FakeModel, rule
 from test_sync import account_state
 
-NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "gate", "review", "create_review_case"]
+NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "review", "create_review_case"]
 
 
 class FakeAccountAgent:
@@ -58,7 +58,7 @@ def test_graph_clean(ds, sections):
     assert order == NORMAL and agent.calls == 1 and policy_model.calls == 1
     assert final["account_attempts"] == 1 and final["policy_attempts"] == 1
     assert final["policy"].policy_date_basis == "complaint_date" and final["derived"].policy_date_basis == "disputed_event"
-    assert final["sync"].issues == [] and final["gate"].gate_rejected is False and final["gate"].route == "adjustment_review"
+    assert final["sync"].issues == [] and final["synthesis"].route == "adjustment_review" and "gate" not in final
     assert final["case"].created is True and final["case"].case_id == "C-004"
 
     inv = investigate(ds, sections, agent, "A-1002", ds.scenarios["S-02"].rep_message, ["t"], "S-02", graph=graph)
@@ -81,7 +81,9 @@ def test_clarify_gives_up_after_two(ds, sections):
     assert agent.calls == MAX_ATTEMPTS == 2 and order.count("sync") == 2 and "synthesize" in order
     assert final["sync"].account_missing is True and final["sync"].lean == "need_more_evidence"
     assert final["derived"].policy_date_basis == "complaint_date" and final["derived"].fact_gap is True
-    assert final["synthesis"].draft is not None and final["case"].created is True  # the run still reaches the end
+    # no evidence was shown, so the fake draft's event IDs are rejected; the run still reaches the end, escalated
+    assert final["synthesis"].draft is None and final["synthesis"].route == "manual_escalation"
+    assert final["case"].created is True and final["case"].route == "manual_escalation"
 
 
 def test_re_retrieve_once(ds, sections, monkeypatch):

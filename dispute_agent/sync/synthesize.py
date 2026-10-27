@@ -4,9 +4,9 @@ Code (`render_case`) lays out everything the two agents and sync produced: categ
 Account Agent's summaries, the checked facts, the evidence events, the kept policy rules and the sync note with
 its lean. One Sonnet call with structured output returns a `Draft`: route, cited event and section IDs,
 confidence, open questions and a short case note. The output schema is built per call so the two ID fields
-accept only the IDs shown (an unshown ID cannot be emitted); the draft then goes to the gate as written, and the
-gate re-checks every ID. A failed call becomes an error, never an exception; the gate turns the missing draft into
-manual_escalation.
+accept only the IDs shown: the evidence events are already on this account (derive_states) and the rules already
+in force (sync), so an unshown or off-account ID cannot be emitted. `route` is what the rep is asked to approve:
+the draft's route, or manual_escalation when there is no draft. A failed call becomes an error, never an exception.
 """
 
 from __future__ import annotations
@@ -54,6 +54,7 @@ class Draft(BaseModel):  # no docstring: pydantic would send it to the LLM as th
 class SynthesisResult(BaseModel):
     draft: Draft | None = None
     errors: list[str] = []
+    route: Route = "manual_escalation"  # the recommended route: the draft's, or manual_escalation without a draft
 
 
 def _render_rule(r: RuleReading) -> str:
@@ -94,7 +95,7 @@ def render_case(
 
 
 def draft_schema(event_ids: list[str], section_ids: list[str]) -> type[Draft]:
-    """Draft with its two ID fields narrowed to the IDs shown. An empty list keeps list[str]; the gate still checks."""
+    """Draft with its two ID fields narrowed to the IDs shown. An empty list keeps list[str]; run_synthesize checks it."""
     fields: dict[str, Any] = {}
     for name, ids in (("event_ids", event_ids), ("policy_source_ids", section_ids)):
         if ids:
@@ -121,10 +122,14 @@ def run_synthesize(
     model: Any = None,
     config: dict | None = None,
 ) -> SynthesisResult:
-    """Render, call once, and turn any failure into an error the gate will reject (D5). Never raises."""
+    """Render, call once, and turn any failure into an error and manual_escalation (D5). Never raises."""
     try:
-        schema = draft_schema([e.event_id for e in derived.evidence_events], [r.section_id for r in synced.rules])
+        events, rules = [e.event_id for e in derived.evidence_events], [r.section_id for r in synced.rules]
         seed = render_case(category, rep_message, account, derived, policy, synced)
-        return SynthesisResult(draft=synthesize(seed, model, config, schema))
+        draft = synthesize(seed, model, config, draft_schema(events, rules))
+        # a schema can't say "no IDs allowed", so when nothing was shown the IDs are checked here
+        if unshown := sorted((set(draft.event_ids) - set(events)) | (set(draft.policy_source_ids) - set(rules))):
+            raise ValueError(f"cited IDs that were not shown: {unshown}")
+        return SynthesisResult(draft=draft, route=draft.review_route)
     except Exception as exc:
         return SynthesisResult(errors=[f"synthesize failed: {type(exc).__name__}: {exc}"])

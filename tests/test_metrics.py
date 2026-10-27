@@ -8,7 +8,7 @@ from dispute_agent.evaluation.metrics import (
 )
 
 ALL_OK = {
-    "route_ok": True, "gate_rejected": False, "disputed_ok": True, "required_found": True, "forbidden_clear": True,
+    "route_ok": True, "policy_consistent": True, "disputed_ok": True, "required_found": True, "forbidden_clear": True,
     "draft_events_ok": True, "policy_retrieved_ok": True, "policy_cited_ok": True, "policy_forbidden_clear": True,
     "draft_policy_ok": True, "confidence_ok": True, "category_ok": True, "action_ok": True, "trajectory_ok": True,
     "draft_route": "explain_events", "route_final": "explain_events", "dropped": 0, "policy_ambiguous_count": 0,
@@ -25,7 +25,6 @@ def test_all_pass():
 
 
 @pytest.mark.parametrize("changes, axis, verdict", [
-    ({"route_ok": True, "gate_rejected": True}, "route", "PARTIAL"),
     ({"route_ok": False}, "route", "FAIL"),
     ({"disputed_ok": False}, "disputed_event", "FAIL"),
     ({"draft_events_ok": False}, "evidence", "PARTIAL"),
@@ -39,6 +38,7 @@ def test_all_pass():
     ({"category_ok": False}, "guardrails", "FAIL"),
     ({"action_ok": False}, "guardrails", "FAIL"),
     ({"trajectory_ok": False}, "guardrails", "FAIL"),
+    ({"policy_consistent": False}, "guardrails", "FAIL"),
 ])
 def test_axis_table(changes, axis, verdict):
     v = axis_verdicts(checks(**changes))
@@ -53,8 +53,8 @@ def test_exception_row_all_fail():
 
 
 def test_no_draft():
-    """S-07's shape: no draft, gate routed manual_escalation (the key's route), facts still right."""
-    v = axis_verdicts(checks(draft_route=None, route_ok=True, gate_rejected=True, draft_events_ok=False,
+    """S-07's shape: no draft, so the fallback route manual_escalation (the key's route) is right but not decided."""
+    v = axis_verdicts(checks(draft_route=None, route_ok=True, route_final="manual_escalation", draft_events_ok=False,
                              draft_policy_ok=False, confidence_ok=False))
     assert v == {"route": "PARTIAL", "disputed_event": "PASS", "evidence": "FAIL", "policy": "FAIL",
                  "confidence": "FAIL", "guardrails": "PASS"}
@@ -62,17 +62,23 @@ def test_no_draft():
 
 
 def test_partial_grade_and_score():
-    v = axis_verdicts(checks(gate_rejected=True, draft_policy_ok=False))
-    assert grade(v) == "PARTIAL" and score_str(v) == "5/6"
+    v = axis_verdicts(checks(draft_policy_ok=False))
+    assert grade(v) == "PARTIAL" and score_str(v) == "5.5/6"
+
+
+def test_policy_consistent_missing_is_not_a_fail():
+    """Reports made before v0.8 have no policy_consistent; only an explicit False fails guardrails."""
+    old = {k: v for k, v in ALL_OK.items() if k != "policy_consistent"}
+    assert axis_verdicts(old)["guardrails"] == "PASS"
 
 
 def test_judge_helpers():
     assert [judge_verdict(s) for s in (3, 2, 1, 0, None)] == ["PASS", "PARTIAL", "FAIL", "FAIL", "ERR"]
     row = {a: {"score": i, "reason": "r", "quote": "q"} for i, a in enumerate(JUDGE_AXES)}
-    assert judge_scores(row) == {"faithfulness": 0, "reasoning_agreement": 1, "actionability": 2, "safety": 3}
+    assert judge_scores(row) == {"no_invented_facts": 0, "matches_rationale": 1, "ready_to_file": 2, "no_leaks_or_promises": 3}
     assert judge_mean(judge_scores(row)) == 1.5
     assert judge_scores({"judge_error": "boom"}) == {a: None for a in JUDGE_AXES} and judge_mean(judge_scores(None)) is None
-    assert judge_mean({"faithfulness": 3, "reasoning_agreement": None, "actionability": 2, "safety": None}) == 2.5
+    assert judge_mean({"no_invented_facts": 3, "matches_rationale": None, "ready_to_file": 2, "no_leaks_or_promises": None}) == 2.5
     assert len(METRIC_NAMES) == 13
 
 

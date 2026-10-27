@@ -67,7 +67,8 @@ def test_resume_streams_to_result(make, ds):
     tid = post(client, ds).headers["x-thread-id"]
     ev = events(client.post(f"/api/threads/{tid}/resume", json={"action": "approve"}))
     assert ev[-1]["type"] == "result" and ev[-1]["case"]["case_id"] == "C-004" and ev[-1]["case"]["created"] is True
-    assert ev[-1]["review"]["action"] == "approve" and ev[-1]["gate"]["gate_rejected"] is False and ev[-1]["draft"]
+    assert ev[-1]["review"]["action"] == "approve" and ev[-1]["route"] == "adjustment_review" and ev[-1]["draft"]
+    assert "gate" not in ev[-1]
     assert client.post(f"/api/threads/{tid}/resume", json={"action": "approve"}).status_code == 409
 
 

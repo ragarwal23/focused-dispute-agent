@@ -4,7 +4,7 @@ Both agents have reported. This file confirms the pieces line up: the Account Ag
 Policy Agent returned rules, every kept rule's section was in force on the policy date, and some kept rule
 covers the dispute category. Anything that does not line up becomes an issue in plain words plus a `lean`,
 the cautious route the draft should lean to. The lean is a sentence shown to the LLM, never a route set by
-code: the LLM still chooses, and the gate and the evals catch it when it chooses wrong.
+code: the LLM still chooses, and the evals catch it when it chooses wrong.
 
 Sync raises two flags the graph may act on, each at most once (docs/plans/orchestrator.md, O2): `account_missing`
 (the Account Agent's finalize failed) sends the Account Agent back for one more run; `policy_date_mismatch` (the

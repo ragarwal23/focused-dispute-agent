@@ -19,7 +19,7 @@ def test_score_failed_finalize_is_not_right(ds, sections):
     c = score(s, investigation(ds, sections, s, None, None, attempts=2), ds)
     model_checks = ("disputed_ok", "required_found", "forbidden_clear", "payment_ok", "refund_ok", "gap_ok", "oam_ok")
     assert not any(c[k] for k in model_checks)
-    assert c["draft_route"] is None and c["route_final"] == "manual_escalation" and c["gate_rejected"] is True
+    assert c["draft_route"] is None and c["route_final"] == "manual_escalation" and c["policy_consistent"] is True
     assert c["route_ok"] is (s.expected_route == "manual_escalation") and c["confidence_ok"] is False
     assert c["draft_events_ok"] is False and c["draft_policy_ok"] is False and c["synth_errors"] == ["no draft"]
     assert len(row_line(s, c)) == len(HEADER)
@@ -31,7 +31,7 @@ def test_score_route_and_confidence(ds, sections):
                   policy_source_ids=s.expected_policy_ids, confidence="high", open_questions=["which refund?"], case_note="x")
     c = score(s, investigation(ds, sections, s, oracle_findings(s), draft), ds)
     assert c["route_ok"] is True and c["confidence_ok"] is False
-    assert c["draft_events_ok"] is True and c["draft_policy_ok"] is True and c["gate_rejected"] is False
+    assert c["draft_events_ok"] is True and c["draft_policy_ok"] is True and c["policy_consistent"] is True
     assert c["trajectory_ok"] is True and c["action_ok"] is True
     assert all(c[k] for k in CHECKS if k != "confidence_ok")
 
@@ -46,15 +46,15 @@ def test_score_action_against_existing_case(ds, sections):
         assert inv.case.created is created and inv.case.case_id == case_id and score(s, inv, ds)["action_ok"] is True
 
 
-def test_score_gate_rescue(ds, sections):
-    s = ds.scenarios["S-07"]
-    draft = Draft(review_route="adjustment_review", event_ids=["E-0157", "E-0135"], policy_source_ids=s.expected_policy_ids,
+def test_score_policy_consistent(ds, sections):
+    """S-02: a received-in-grace payment rules out explain_events, so that route is scored inconsistent, and wrong."""
+    s = ds.scenarios["S-02"]
+    draft = Draft(review_route="explain_events", event_ids=s.expected_required_event_ids, policy_source_ids=s.expected_policy_ids,
                   confidence="medium", case_note="x")
     c = score(s, investigation(ds, sections, s, oracle_findings(s), draft), ds)
-    assert c["gate_rejected"] is True and c["route_final"] == "manual_escalation"
-    assert c["route_ok"] is True and c["draft_route"] == "adjustment_review"
-    assert c["draft_events_ok"] is False  # E-0135 is forbidden
-    assert c["gate_reasons"] == ["event E-0135 is on A-1008, not A-1007"]
+    assert c["route_final"] == c["draft_route"] == "explain_events"  # nothing overrides the draft at runtime
+    assert c["route_ok"] is False and c["policy_consistent"] is False
+    assert "gate_rejected" not in c and "gate_reasons" not in c
 
 
 def test_confusion_matrix():
