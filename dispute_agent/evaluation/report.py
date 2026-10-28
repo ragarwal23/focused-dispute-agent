@@ -1,21 +1,25 @@
 """One eval JSON plus golden.xlsx -> a release workbook: `Run`, `Cases`, `Verdict Matrix`, `Slices`, one `S-xx` sheet per
 golden case; with --judge a judge panel per sheet, with --before a `Compare` sheet, with --labels a `Calibration` sheet.
 Every actual value is copied from the JSON row as the run produced it; verdicts come from metrics.py, scores from the
-judge sidecar. Nothing is scored here. `build_labels` writes the workbook Rachit scores by hand (`calibrate --build`).
+judge sidecar. Nothing is scored here. An --out ending in .md writes the Verdict Matrix as a page instead, each row linked
+to its public LangSmith trace. `build_labels` writes the workbook Rachit scores by hand (`calibrate --build`).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 from typing import Any
 
+from langsmith import Client
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from dispute_agent.evaluation.evaluate import confusion_lines
+from dispute_agent.evaluation.experiment import public_links
 from dispute_agent.evaluation.golden import GOLDEN_XLSX, HEADER_FILL, HEADER_FONT, WRAP, Case, cell, read_golden
 from dispute_agent.evaluation.judge import SCALE_TEXT, agreement, read_labels
 from dispute_agent.evaluation.metrics import (
@@ -344,6 +348,46 @@ def write_report(
     wb.save(out)
 
 
+DOTS = {"PASS": "🟢", "PARTIAL": "🟡", "FAIL": "🔴", "PENDING": "⚪"}
+MD_AXES = {  # each code axis as a plain question, for readers who will not open the workbook
+    "route": "Right queue?", "disputed_event": "Found the charge?", "evidence": "Right evidence?",
+    "policy": "Right policy?", "confidence": "Honest confidence?", "guardrails": "Guardrails held?",
+}
+
+
+def write_markdown(data: dict[str, Any], json_path: Path, cases: list[Case], out: Path, judge: dict[str, Any] | None,
+                   links: tuple[str, dict[str, str]] | None) -> None:
+    """The Verdict Matrix as a page GitHub renders: one row per scenario, a dot per axis, a link to its trace."""
+    rows = {r["scenario_id"]: r for r in data["rows"]}
+    plain = lambda s: s.replace("_", " ").capitalize()  # noqa: E731
+    counts = pass_counts(list(rows.values()))
+    lines = [
+        "# Evaluation results", "",
+        f"The agent ran on all {len(cases)} test complaints. Code grades each check against the answer key: "
+        "🟢 pass · 🟡 partial · 🔴 fail. *Note quality* is the Opus judge's mean score for the case note, out of 3. "
+        "**Trace** opens every step the agent took, in LangSmith (public, no login).", "",
+        f"**{counts['grade'][0]} of {counts['grade'][1]} complaints pass every check.**", "",
+        "| Complaint | Type | Trap | " + " | ".join(MD_AXES.values()) + " | Overall | Note quality | |",
+        "|---|---|---|" + ":-:|" * (len(AXES) + 2) + "---|",
+    ]
+    for case in cases:
+        row = rows.get(case.scenario_id)
+        verdicts = row_verdicts(row) if row else {a: "PENDING" for a in AXES}
+        mean = judge_mean(judge_scores(judge["rows"].get(case.scenario_id))) if judge and row else None
+        trace = (links[1] if links else {}).get(case.scenario_id)
+        lines.append("| " + " | ".join([
+            case.scenario_id + (" *(held out)*" if case.split == "heldout" else ""), plain(case.expected_category),
+            "—" if case.trap == "none" else plain(case.trap), *(DOTS[verdicts[a]] for a in AXES),
+            f"{DOTS[grade(verdicts) if row else 'PENDING']} {grade(verdicts) if row else 'not run'}",
+            "—" if mean is None else f"{mean:.2f} / 3", f"[trace]({trace})" if trace else "",
+        ]) + " |")
+    lines += ["", f"Generated from `{json_path.as_posix()}` by `python -m dispute_agent report --out {out.as_posix()}`."
+              + (f" The whole run in LangSmith: [experiment]({links[0]})." if links else "")
+              + " How each check is scored: [evaluation README](../dispute_agent/evaluation/README.md).", ""]
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(lines))
+
+
 def render(json_path: str, out: str, golden_path: Path = GOLDEN_XLSX, judge: str | None = None,
            before: str | None = None, labels: str | None = None) -> int:
     """The `report` command: exit 0 on success, 2 when an input is not what its flag says."""
@@ -358,6 +402,11 @@ def render(json_path: str, out: str, golden_path: Path = GOLDEN_XLSX, judge: str
         print(f"report: {exc}")
         return 2
     cases = read_golden(golden_path)
+    if out.endswith(".md"):  # the matrix as a page; with a captured experiment, each row links its public trace
+        links = public_links(Client(), data["experiment_name"]) if data.get("experiment_name") and os.getenv("LANGSMITH_API_KEY") else None
+        write_markdown(data, Path(json_path), cases, Path(out), judge_data, links)
+        print(f"wrote {out}: {len(cases)} rows" + (", with trace links" if links else ", no trace links (no experiment or no key)"))
+        return 0
     write_report(data, Path(json_path), cases, Path(out), judge_data, before_data, label_data)
     extras = [name for name, flag in (("judge", judge), ("compare", before), ("calibration", labels)) if flag]
     print(f"wrote {out}: {len(cases)} scenario sheets, {len(data['rows'])} with a run" + (f", with {', '.join(extras)}" if extras else ""))

@@ -151,6 +151,15 @@ def experiment_line(results: Any) -> tuple[str, str | None]:
     return getattr(results, "experiment_name", ""), getattr(results, "url", None)
 
 
+def public_links(client: Any, experiment_name: str) -> tuple[str, dict[str, str]]:
+    """The public URL of an experiment on the shared dataset, and each scenario's public trace in it."""
+    base = client.read_dataset_shared_schema(dataset_name=DATASET_NAME)["url"]
+    project_id = client.read_project(project_name=experiment_name).id
+    url = f"{base}/compare?selectedSessions={project_id}"
+    runs = client.list_runs(project_id=project_id, is_root=True)
+    return url, {(r.inputs or {}).get("scenario_id"): f"{url}&trace={r.trace_id}&peeked_trace_id={r.trace_id}" for r in runs}
+
+
 def sync_langsmith(eval_path: Path, judge_path: Path | None = None, client: Any = None, evaluate_fn: Any = None) -> int:
     """The `langsmith-sync` command: replay an eval JSON as an experiment (no model call); prints its URL. Exit 2 without a key."""
     if not os.getenv("LANGSMITH_API_KEY"):

@@ -247,3 +247,19 @@ def test_old_format_row(ds):
     assert consistent(old) is None and consistent(normal_row(ds.scenarios["S-01"])) == "ok"
     assert case_row(1, ds.scenarios["S-01"], old)[8:12] == ["explain_events", "E-0117", "E-0117", None]
     assert "policy_consistent" in CASE_COLS and "gate_rejected" not in CASE_COLS
+
+
+def test_markdown_page(ds, tmp_path, monkeypatch, capsys):
+    """An --out ending in .md writes the matrix as a page; with no key (or no experiment) the rows carry no trace link."""
+    monkeypatch.delenv("LANGSMITH_API_KEY", raising=False)
+    json_path = tmp_path / "eval_x.json"
+    json_path.write_text(json.dumps(eval_data(ds)))
+    judge_path = tmp_path / "judge_x.json"
+    judge_path.write_text(json.dumps(judge_data(json_path)))
+    out = tmp_path / "results.md"
+    assert render(str(json_path), str(out), judge=str(judge_path)) == 0
+    assert "no trace links" in capsys.readouterr().out
+    lines = {l.split(" |")[0].strip("| "): l for l in out.read_text().splitlines() if l.startswith("| S-")}
+    assert len(lines) == 16 and "🟢 PASS" in lines["S-01"] and "2.25 / 3" in lines["S-01"] and "[trace]" not in lines["S-01"]
+    assert "🟡" in lines["S-07"] and "🔴 FAIL" in lines["S-07"] and "⚪ not run" in lines["S-03"]
+    assert "*(held out)*" in lines["S-04 *(held out)*"] and "**1 of 3 complaints pass every check.**" in out.read_text()

@@ -6,7 +6,7 @@ release workbook. The same axes score every scenario; only the golden values dif
 scorer is proven on the key itself (`eval --producer golden_echo`, 16/16 PASS) and on an empty answer (`empty_stub`,
 exit 1).
 
-**Results: [the release experiment in LangSmith, public](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737)**, one row per scenario with its trace, the six code axes and
+**Results: [docs/results.md](../../docs/results.md)**, the verdict matrix with a trace link per scenario, rendered by `report --out docs/results.md`; the same run as [the release experiment in LangSmith, public](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737), one row per scenario with its trace, the six code axes and
 the four judge scores. Also available locally:
 [`reports/release_2026-10-27_v0.8.xlsx`](reports/release_2026-10-27_v0.8.xlsx), the same run as a workbook that adds the
 `Slices` and `Compare` sheets LangSmith does not draw. In LangSmith a PARTIAL scores 0.5 and a judge score shows as a fraction of 3 (0.67 is 2 of 3; hover it for the reason); the workbook counts

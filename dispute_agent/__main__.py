@@ -324,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
                     help="run as a LangSmith experiment on the golden dataset (each row carries its trace)")
     rep = sub.add_parser("report", help="render one eval JSON next to golden.xlsx as a release workbook")
     rep.add_argument("json_path", metavar="eval.json")
-    rep.add_argument("--out", required=True, metavar="release.xlsx")
+    rep.add_argument("--out", required=True, metavar="release.xlsx", help="a .md path writes the Verdict Matrix as a page with trace links")
     rep.add_argument("--judge", metavar="judge.json", help="the judge sidecar for this JSON: judge panels and judge columns")
     rep.add_argument("--before", metavar="eval.json", help="an older eval JSON: adds the Compare sheet")
     rep.add_argument("--labels", metavar="labels.xlsx", help="hand labels (needs --judge): adds the Calibration sheet")

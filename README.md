@@ -40,7 +40,7 @@ flowchart TD
 
 **All 16 scenarios:** the right queue on 15 (S-11 misses). The disputed event, the required evidence, no other-account evidence and the P1–P7 policy checks hold on all 16. The required policy sections are cited on 14; held-out S-04 and S-12 each miss one.
 
-**[See the results in LangSmith](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737)** (public, no login): the release experiment on the `dispute-agent-golden` dataset. One row per scenario (all 16), the six code-graded axes and the four judge scores as columns. Judge scores show as a fraction of 3 (0.67 is 2 of 3); hover one for the judge's reason. Click a row to open its trace: the complaint, both agents' tool and model calls, and the draft.
+**[See the results](docs/results.md)**: one row per scenario, a 🟢/🟡/🔴 dot for each check, and a link to each scenario's trace in LangSmith (public, no login): the complaint, both agents' tool and model calls, and the draft. The whole run is also one [LangSmith experiment](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737), with the judge's reason on hover for each score.
 
 The same run is also available locally as a workbook ([`release_2026-10-27_v0.8.xlsx`](dispute_agent/evaluation/reports/release_2026-10-27_v0.8.xlsx)), which adds slices by tag. How each metric is scored is in the [evaluation README](dispute_agent/evaluation/README.md).
 

@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from dispute_agent.evaluation.experiment import (
-    DATASET_NAME, append_judge, axes_feedback, dataset_examples, ensure_dataset, judge_feedback, replay_output,
+    DATASET_NAME, append_judge, axes_feedback, dataset_examples, ensure_dataset, judge_feedback, public_links, replay_output,
     run_experiment, select_examples, sync_langsmith,
 )
 from dispute_agent.evaluation.golden import read_golden
@@ -181,3 +181,15 @@ def test_judge_experiment_cli(ds, tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("LANGSMITH_API_KEY")
     assert main(["judge", str(captured), "--experiment"]) == 2
     assert capsys.readouterr().out.strip() == "judge: LANGSMITH_API_KEY is not set"
+
+
+def test_public_links():
+    """The experiment's URL on the shared dataset, and one trace link per scenario that opens that trace."""
+    client = SimpleNamespace(
+        read_dataset_shared_schema=lambda dataset_name: {"url": "https://smith.langchain.com/public/tok/d"},
+        read_project=lambda project_name: SimpleNamespace(id="sess"),
+        list_runs=lambda project_id, is_root: [SimpleNamespace(inputs={"scenario_id": "S-01"}, trace_id="t1")],
+    )
+    url, traces = public_links(client, "release-x")
+    assert url == "https://smith.langchain.com/public/tok/d/compare?selectedSessions=sess"
+    assert traces == {"S-01": url + "&trace=t1&peeked_trace_id=t1"}
