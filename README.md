@@ -64,7 +64,9 @@ How I'd run this in production: [evaluation README § In production](dispute_age
 
 ## Quickstart
 
-**1. Set up**, then add your Anthropic and LangSmith keys to `.env`:
+**Before you start:** you need your own API keys. An Anthropic key is required. A LangSmith key is optional; it records traces and is needed for `eval --experiment`.
+
+**1. Set up:**
 
 ```bash
 make setup
@@ -80,7 +82,14 @@ cp .env.example .env
 
 </details>
 
-**2. Run the web app** (no Node needed):
+**2. Add your keys** to `.env` (setup creates it):
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...
+LANGSMITH_API_KEY=lsv2_...      # optional; without it, set LANGSMITH_TRACING=false
+```
+
+**3. Run the web app** (no Node needed):
 
 ```bash
 make run        # or: .venv/bin/python -m app.server
