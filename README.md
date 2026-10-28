@@ -6,7 +6,19 @@ A LangGraph agent that investigates a customer's payment dispute and drafts a re
 
 ## What it does
 
-A rep gets a complaint like "I was charged a late fee but autopay was on." The agent reads the account history and the policy in force, then drafts a case: which queue it belongs in, the evidence behind that, and a note. The rep approves, overrides or answers its questions. The agent never moves money. Full brief: [project_brief.md](docs/project_brief.md).
+A servicing rep at an auto lender gets complaints like "I was charged a late fee but autopay was on." Today the rep digs through the account history, rereads notes from earlier calls, checks the policy and writes up a case by hand.
+
+The agent does the digging. For each complaint it drafts one review case with:
+
+- **A recommended queue,** one of four:
+  - `adjustment_review`: the customer may be right; someone with authority should look at a correction.
+  - `explain_events`: the records and policy explain what happened; the rep walks the customer through it.
+  - `need_more_evidence`: something critical is missing, usually from the customer.
+  - `manual_escalation`: records conflict, evidence points at the wrong account, or policy is unclear.
+- **The evidence:** the account events and policy sections behind the recommendation, each one cited.
+- **A case note** the rep can read in a minute.
+
+The rep then approves it, overrides the queue with a reason, or answers the agent's open questions. The agent never moves money. Full brief: [project_brief.md](docs/project_brief.md).
 
 ## How it works
 
@@ -40,36 +52,38 @@ How I'd run this in production: [evaluation README § In production](dispute_age
 
 ## Quickstart
 
+**1. Set up:**
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env   # add your Anthropic and LangSmith keys
-python -m dispute_agent ask A-1002 "cust got hit w a late fee on oct but says he paid over the phone last tues"
 ```
 
-`ask` pauses for review and prints a thread ID; `python -m dispute_agent resume <thread> --approve` files the case.
-
-<details>
-<summary><b>Try it in the web app</b></summary>
+**2. Run the web app** (needs Node):
 
 ```bash
 python -m app.server                  # terminal 1: the API on 127.0.0.1:8000
 cd app && npm ci && npm run dev       # terminal 2: open http://localhost:5173
 ```
 
-If port 8000 is taken, run `python -m app.server --port 8010` and `API_PORT=8010 npm run dev`.
-
 1. Pick a complaint from the inbox. It holds the 12 dev scenarios by account number, never the held-out four or the answer key.
-2. The complaint fills the composer as the rep's message. Edit it if you like, then send.
-3. The reply shows each step as it runs, then the recommended route, the case note and its sources.
-4. Approve it, override the route with a reason, or, on `need_more_evidence`, answer the open questions in the composer.
+2. Send it. The reply shows each step as it runs, then the recommended queue, the case note and its sources.
+3. Approve it, override the queue with a reason, or, on `need_more_evidence`, answer the open questions.
 
-"New conversation" starts a complaint on any account. Every run is traced in LangSmith under the `LANGSMITH_PROJECT` in `.env`.
+"New conversation" starts a complaint on any account. If port 8000 is taken, run `python -m app.server --port 8010` and `API_PORT=8010 npm run dev`.
 
-</details>
+**Or from the terminal** (no Node):
+
+```bash
+python -m dispute_agent ask A-1002 "cust got hit w a late fee on oct but says he paid over the phone last tues"
+python -m dispute_agent resume <thread> --approve   # ask prints the thread ID
+```
+
+Every run is traced in LangSmith under the `LANGSMITH_PROJECT` in `.env`.
 
 <details>
-<summary><b>Command line</b></summary>
+<summary><b>All commands</b></summary>
 
 ```bash
 python -m dispute_agent show A-1002            # one account's events, notes and cases (no LLM)
