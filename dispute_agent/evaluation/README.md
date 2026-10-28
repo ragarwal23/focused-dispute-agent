@@ -1,10 +1,45 @@
-# Evaluation: golden workbook, metrics, judge, release workbook
+# Evaluation
 
-Three stages: **`eval`** captures a run of every scenario into a JSON, **`judge`** scores
-each case note with a second model into a sidecar JSON, **`report`** renders both next to the golden answers as one
-release workbook. The same axes score every scenario; only the golden values differ. Before any model is graded the
-scorer is proven on the key itself (`eval --producer golden_echo`, 16/16 PASS) and on an empty answer (`empty_stub`,
-exit 1).
+How the agent is tested. A golden dataset holds the right answer for every test complaint. Code grades the facts of each
+case with deterministic metrics, and an LLM judge grades the writing with qualitative metrics. One pipeline runs all
+of it and publishes the results.
+
+## The approach
+
+1. **Golden dataset.** 16 hand-written complaints, each with an answer key: the right queue, the charge in dispute, the
+   evidence and policy sections the case must cite, the ones it must not cite, and a short rationale. Most hide a trap:
+   a look-alike payment on another account, an instruction planted in a memo, a missing record, an outdated policy.
+   12 are for development. 4 are held out (S-04, S-08, S-12, S-16) and were never used to tune the agent.
+2. **Deterministic metrics (code-graded).** Six checks compare each case with its answer key: right queue, right
+   disputed charge, right evidence, right policy, honest confidence, guardrails held. Each scores PASS, PARTIAL or
+   FAIL. A complaint passes only if all six pass. No LLM is involved, so the same case always gets the same score.
+3. **Qualitative metrics (LLM as judge).** Code can't tell whether a case note is accurate and usable, so Claude Opus 5.5
+   grades the note that Claude Sonnet 5.5 wrote. It scores four axes from 0 to 3: no invented facts, agrees with the
+   rationale, ready to file, and no leaks or promises. Any score below 3 must quote the sentence that lost the point.
+4. **Checking the graders.** Before grading the agent, the code scorer is run on the answer key itself (16/16 PASS) and
+   on an empty answer (fails). The judge was calibrated against hand scores on the 12 dev notes. It was within
+   one point on every note (see [Calibration](#calibration)).
+5. **Fix and rerun.** Every change to the agent came from a failed run and was rechecked on the same complaints:
+   [eval history](../../docs/eval_history.md).
+
+## The pipeline
+
+```
+golden.xlsx ──► eval ──► runs/eval_<ts>.json ──► judge ──► runs/judge_<ts>.json ──► report ──► docs/results.md
+ (answer key)    runs the agent on each            Opus scores each                  + release workbook
+                 complaint and applies             case note 0-3
+                 the six code metrics
+                     │
+                     └── with --experiment, every row is also a LangSmith experiment row with its trace
+```
+
+- **`eval`** runs the agent on every complaint in a split, scores it with the code metrics and writes a JSON.
+- **`judge`** sends each case note to Opus and writes its scores to a second JSON.
+- **`report`** puts both next to the answer key: the [results page](../../docs/results.md) and an Excel workbook.
+
+The rest of this page is the reference: files, commands, exact metric definitions and calibration numbers.
+
+## Where the results are
 
 **Results: [docs/results.md](../../docs/results.md)**, the verdict matrix with a trace link per scenario, rendered by `report --out docs/results.md`; the same run as [the release experiment in LangSmith, public](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=f5712c13-dbd9-4a12-8177-46ee8c13a3b7), one row per scenario with its trace, the six code axes and
 the four judge scores. Also available locally: [`reports/release_2026-10-28_v0.10.xlsx`](reports/release_2026-10-28_v0.10.xlsx),
@@ -25,7 +60,7 @@ PASS and shows 0-3.
 | [`report.py`](report.py) | The `report` command: one eval JSON (+ judge sidecar, + an older JSON, + labels) and `golden.xlsx` into a release workbook; `calibrate --build` writes the labels workbook |
 | [`experiment.py`](experiment.py) | The LangSmith side: the golden dataset (created once, never deleted, since deleting it deletes its experiments), `eval --experiment`, `judge --experiment`, and `langsmith-sync` to replay an older JSON |
 | [`validate.py`](validate.py) | `stability` over repeated evals and LangSmith `trace` shapes |
-| [`labels.xlsx`](labels.xlsx) | The 12 dev case notes of the 2026-10-27 release with four empty 0-3 columns for Rachit to score (see Calibration) |
+| [`labels.xlsx`](labels.xlsx) | The 12 dev case notes of the 2026-10-27 release with four 0-3 columns for hand scores (see Calibration) |
 | [`reports/`](reports/) | One committed workbook per release. **[`release_2026-10-28_v0.10.xlsx`](reports/release_2026-10-28_v0.10.xlsx) is the current one**, the local copy of the linked experiment. [`release_2026-10-28_v0.9.xlsx`](reports/release_2026-10-28_v0.9.xlsx) and [`release_2026-10-27_v0.8.xlsx`](reports/release_2026-10-27_v0.8.xlsx) are earlier runs. The two earlier workbooks that the history docs mention (`release_2026-10-27.xlsx`, with the gate, and `release_2026-10-27_no-gate.xlsx`) were dropped from the repo once the results page replaced them; their run files are still in `runs/` locally |
 
 ## The golden workbook
@@ -129,7 +164,7 @@ main project keeps seeing only graph runs.
   or fewer is marked `(directional)`, per the brief.
 - **`Compare`** (with `--before`): per-axis PASS counts for both runs over the scenarios they share, then every
   (scenario, axis) whose verdict changed, marked `improved` or `regressed`. Scenarios in one run only are listed as excluded.
-- **`Calibration`** (with `--labels`): per judge axis, how many notes Rachit has scored, exact and within-1 agreement,
+- **`Calibration`** (with `--labels`): per judge axis, how many notes have hand scores, exact and within-1 agreement,
   both means, and every disagreement. `no labels yet` until the workbook is filled.
 - **`S-xx`**: `field | golden | actual | verdict`, the verdict being the axis that governs that field (`payment_state`
   and `refund_state` belong to no axis and stay blank). `rationale / case_note` puts the labeler's reasoning beside the
@@ -138,7 +173,7 @@ main project keeps seeing only graph runs.
 
 ## Calibration
 
-`labels.xlsx` holds the 12 dev notes of the first 2026-10-27 release, scored by Rachit on 2026-10-27 (four 0-3 columns; `How to score`
+`labels.xlsx` holds the 12 dev notes of the first 2026-10-27 release, hand-scored on 2026-10-27 (four 0-3 columns; `How to score`
 has the scale). `calibrate --check` compares those scores to the judge's:
 
 ```bash
@@ -155,7 +190,7 @@ python -m dispute_agent calibrate --check runs/judge_20261027T180514Z.json --lab
 Every axis is within one point on every note, so no rubric needs rewording (the threshold is 75 percent within-1 on at
 least six labels; a miss there changes the rubric, never the agent). The five disagreements are all one point: the
 judge is stricter on S-11 and S-13 (`matches_rationale`, judge 2 / human 3) and on S-05 and S-15 (`ready_to_file`,
-judge 2 / human 3), and Rachit is stricter on S-06 (`matches_rationale`, judge 2 / human 1: right route for the wrong
+judge 2 / human 3), and the hand score is stricter on S-06 (`matches_rationale`, judge 2 / human 1: right route for the wrong
 reason, the note calls the "77" reference matches coincidental where the key says it belongs to another customer).
 
 **What this calibration does not show.** Ten of twelve notes are near-perfect, so agreement is mostly at the ceiling:

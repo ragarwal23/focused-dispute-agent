@@ -26,6 +26,10 @@ The rep then approves it, overrides the queue with a reason, or answers the agen
 
 An orchestrator runs two agents in parallel (Account and Policy), joins their findings, drafts the case and pauses for the rep. Details: [architecture.md](docs/architecture.md).
 
+## How I tested it
+
+A golden dataset of 16 complaints with an answer key (4 held out), graded two ways: **deterministic metrics** in code for the facts (queue, charge, evidence, policy, confidence, guardrails) and an **LLM judge** (Claude Opus 5.5) for the quality of the case note, calibrated against hand scores. **[Eval strategy and pipeline →](dispute_agent/evaluation/README.md)**
+
 ## Results
 
 **12 of 16 test complaints pass every check.** Code grades each complaint against the answer key; Claude Opus 5.5 grades each case note.
