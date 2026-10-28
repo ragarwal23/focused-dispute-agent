@@ -43,8 +43,8 @@ def test_clean_sequence(ds, sections):
         assert e["type"] == "step" and e["owner"] == STEPS[e["key"]].owner and e["parent"] is None and e["label"]
     ends = {e["key"]: e for e in events if e.get("phase") == "end"}
     assert set(ends) == set(keys) - {"review"}  # review has no end: the pause closes it
-    assert ends["classify"]["label"] == "Dispute type: late fee with autopay on"
-    assert ends["synthesize"]["label"] == "Draft written: route adjustment_review" and ends["synthesize"]["detail"] is None
+    assert ends["classify"]["label"] == "Dispute type: late fee / autopay"
+    assert ends["synthesize"]["label"] == "Draft written: Adjustment review" and ends["synthesize"]["detail"] is None
     assert ends["sync"]["label"] == "Cross-check: no issues"
     assert events[-1]["type"] == "pause" and events[-1]["request"]["route"] == "adjustment_review"
     assert [e["owner"] for e in events if e.get("key") == "review"] == ["you"]
@@ -54,7 +54,7 @@ def test_resume_to_case(ds, sections):
     graph, _ = start(ds, sections, "S-02", FakeAccountAgent(account_state(oracle_findings(ds.scenarios["S-02"]))))
     events = trail(graph, Command(resume={"action": "approve"}), "t")
     done = [e["label"] for e in events if e.get("phase") == "end"]
-    assert done == ["You approved", "Case C-004 filed under adjustment_review (new)"]
+    assert done == ["You approved", "Case C-004 filed under Adjustment review (new)"]
     assert all(e["type"] == "step" for e in events)
 
 

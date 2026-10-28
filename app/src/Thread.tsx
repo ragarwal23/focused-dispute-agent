@@ -1,7 +1,7 @@
 // The conversation: the rep's messages on the right, the assistant's replies on the left, the composer at the bottom.
 // An assistant reply shows a phase bar and its steps inline as it works, then its recommendation and the rep's choices.
 import { useEffect, useRef, useState } from "react";
-import { api, ROUTES, ROUTE_LABEL, type Decision, type ReviewRequest, type ResultEvent, type Route } from "./api";
+import { api, ROUTES, ROUTE_LABEL, type Decision, type ReviewRequest, type ResultEvent, type Route, type Source, type Sources } from "./api";
 import { activePause, type AssistantTurn, type Step, type ThreadState, type Turn } from "./App";
 
 const PHASES = ["Reading", "Investigating", "Drafting"];
@@ -15,8 +15,34 @@ function phaseOf(t: AssistantTurn): number {
 }
 const category = (steps: Step[]) => steps.find((s) => s.key === "classify" && s.status === "done")?.label.replace("Dispute type: ", "");
 
-function Ids({ ids }: { ids: string[] }) {
-  return <>{ids.length ? ids.map((id) => <code key={id} className="chip">{id}</code>) : <span className="muted">none</span>}</>;
+const money = (n: number) => n.toLocaleString("en-US", { style: "currency", currency: "USD" });
+const day = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+function SourceCard({ s }: { s: Source }) {
+  if (s.kind === "policy") return (
+    <><strong>{s.title}</strong><span>{s.doc} · in force from {day(s.effective_from)}{s.status === "superseded" && " · superseded"}</span></>
+  );
+  return (
+    <><strong>{s.type.replace(/_/g, " ")}</strong>
+      <span>{[day(s.date), s.amount != null && money(s.amount), s.channel].filter(Boolean).join(" · ")}</span>
+      {s.memo && <blockquote className="memo"><span className="eyebrow">Memo, as recorded</span>{s.memo}</blockquote>}</>
+  );
+}
+
+/** A cited ID; hover or focus it to see what the record or policy section is. */
+export function Chip({ id, sources }: { id: string; sources?: Sources }) {
+  const s = sources?.[id];
+  if (!s) return <code className="chip">{id}</code>;
+  return (
+    <span className="src" tabIndex={0}>
+      <code className="chip">{id}</code>
+      <span className="pop" role="tooltip"><SourceCard s={s} /></span>
+    </span>
+  );
+}
+
+function Ids({ ids, sources }: { ids: string[]; sources?: Sources }) {
+  return <>{ids.length ? ids.map((id) => <Chip key={id} id={id} sources={sources} />) : <span className="muted">none</span>}</>;
 }
 
 function PhaseBar({ phase }: { phase: number }) {
@@ -61,6 +87,8 @@ function Recommendation({ req, live, onDecide }: { req: ReviewRequest; live: boo
   const [overriding, setOverriding] = useState(false);
   const [route, setRoute] = useState<Route>(ROUTES.find((r) => r !== req.route) ?? "manual_escalation");
   const [reason, setReason] = useState("");
+  const formRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (overriding) formRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }); }, [overriding]);
   const d = req.draft;
   return (
     <div className="answer">
@@ -80,8 +108,8 @@ function Recommendation({ req, live, onDecide }: { req: ReviewRequest; live: boo
       )}
       {d && (
         <div className="sources"><span className="eyebrow">Sources</span>
-          <div className="source-row"><span className="muted">Records</span><Ids ids={d.event_ids} /></div>
-          <div className="source-row"><span className="muted">Policy</span><Ids ids={d.policy_source_ids} /></div>
+          <div className="source-row"><span className="muted">Records</span><Ids ids={d.event_ids} sources={req.sources} /></div>
+          <div className="source-row"><span className="muted">Policy</span><Ids ids={d.policy_source_ids} sources={req.sources} /></div>
         </div>
       )}
       {live && (
@@ -91,7 +119,7 @@ function Recommendation({ req, live, onDecide }: { req: ReviewRequest; live: boo
         </div>
       )}
       {live && overriding && (
-        <div className="subform">
+        <div className="subform" ref={formRef}>
           <label>File under
             <select value={route} onChange={(e) => setRoute(e.target.value as Route)}>
               {ROUTES.map((r) => <option key={r} value={r}>{ROUTE_LABEL[r]}</option>)}
@@ -122,7 +150,7 @@ function Filed({ result, threadId }: { result: ResultEvent; threadId: string | n
     <div className="answer">
       <div className="route-line"><span className="eyebrow">{c.created ? "Case filed" : "Existing case kept"}</span><code className="case-id">{c.case_id}</code></div>
       <p className="note">Filed under <strong>{ROUTE_LABEL[c.route]}</strong>{r.action === "override" ? <>, on your override: “{r.reason}”</> : ", as recommended and approved by you"}.
-        {c.disputed_event_id ? <> The disputed record is <code className="chip">{c.disputed_event_id}</code>.</> : " No single disputed record was identified."}
+        {c.disputed_event_id ? <> The disputed record is <Chip id={c.disputed_event_id} sources={result.sources} />.</> : " No single disputed record was identified."}
         {!c.created && " An open case already covered this, so nothing new was created."}</p>
       <div className="actions">
         <button className="ghost" onClick={viewTrace}>View trace in LangSmith</button>
@@ -152,8 +180,8 @@ function Reply({ turn, index, live, threadId, onDecide }: {
   );
 }
 
-export default function Thread({ thread: t, onSend, onDecide, onDismiss }: {
-  thread: ThreadState; onSend: (text: string) => void; onDecide: (d: Decision) => void; onDismiss: () => void;
+export default function Thread({ thread: t, customer, onSend, onDecide, onDismiss }: {
+  thread: ThreadState; customer?: string; onSend: (text: string) => void; onDecide: (d: Decision) => void; onDismiss: () => void;
 }) {
   const [text, setText] = useState(t.prefill);
   const endRef = useRef<HTMLDivElement>(null);
@@ -172,7 +200,7 @@ export default function Thread({ thread: t, onSend, onDecide, onDismiss }: {
   }
   return (
     <article className="thread">
-      <header className="thread-head"><code className="acct big">{t.accountId}</code><span className="muted">{t.channel}</span>{t.threadId && <code className="muted tid">{t.threadId}</code>}</header>
+      <header className="thread-head"><code className="acct big">{t.accountId}</code>{customer && <strong className="customer">{customer}</strong>}<span className="muted">{t.channel}</span></header>
       <div className="turns">
         {t.turns.length === 0 && <p className="hint">Review the complaint in the box below, add anything the customer told you, and send it.</p>}
         {t.turns.map((turn: Turn, i) => turn.role === "rep"

@@ -26,11 +26,26 @@ Owner = Literal["ai", "code", "you"]
 Label = str | Callable[[dict[str, Any]], str]  # a fixed string, or built from the task's input (start) or result (done)
 
 CATEGORY = {
-    "late_fee_autopay": "late fee with autopay on",
+    "late_fee_autopay": "late fee / autopay",
     "missing_payment": "missing payment",
     "returned_reversed_payment": "returned or reversed payment",
     "refund_status": "refund status",
 }
+
+ROUTE = {  # the page's ROUTE_LABEL (app/src/api.ts)
+    "adjustment_review": "Adjustment review",
+    "explain_events": "Explain the events",
+    "need_more_evidence": "Need more evidence",
+    "manual_escalation": "Manual escalation",
+}
+
+
+def _n(count: int, noun: str) -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _route(route: str) -> str:
+    return ROUTE.get(route, _words(route))
 
 
 def _day(d: Any) -> str:
@@ -42,7 +57,7 @@ def _words(value: str) -> str:
 
 
 def _lookups(r: dict[str, Any]) -> str:
-    return f"{r['account']['tool_calls_made']} lookups"
+    return _n(r["account"]["tool_calls_made"], "lookup")
 
 
 def _states(r: dict[str, Any]) -> str:
@@ -52,17 +67,19 @@ def _states(r: dict[str, Any]) -> str:
 
 def _policy(r: dict[str, Any]) -> str:
     rules = r["policy"].rules
-    return f"Policy read: {len(rules)} rules from {len({x.section_id for x in rules})} sections"
+    return f"Policy read: {_n(len(rules), 'rule')} from {_n(len({x.section_id for x in rules}), 'section')}"
 
 
 def _review(r: dict[str, Any]) -> str:
     d = r["review"]
-    return {"approve": "You approved", "override": f"You overrode the route to {d.route}", "answer": "You answered"}[d.action]
+    if d.action == "override":
+        return f"You overrode the route to {_route(d.route)}"
+    return {"approve": "You approved", "answer": "You answered"}[d.action]
 
 
 def _case(r: dict[str, Any]) -> str:
     c = r["case"]
-    return f"Case {c.case_id} filed under {c.route} ({'new' if c.created else 'already existed'})"
+    return f"Case {c.case_id} filed under {_route(c.route)} ({'new' if c.created else 'already existed'})"
 
 
 @dataclass(frozen=True)
@@ -90,7 +107,7 @@ STEPS: dict[str, Step] = {
     "sync": Step("code", "Cross-checking the account findings against the policy",
                  lambda r: "Cross-check: " + ("; ".join(r["sync"].issues) or "no issues")),
     "synthesize": Step("ai", "Drafting the review case", lambda r: (
-        f"Draft written: route {r['synthesis'].draft.review_route}" if r["synthesis"].draft else "The assistant could not write a draft")),
+        f"Draft written: {_route(r['synthesis'].draft.review_route)}" if r["synthesis"].draft else "The assistant could not write a draft")),
     "review": Step("you", "Waiting for your decision", _review),
     "account_agent_followup": Step("ai", "Looking at the account again with your answer",
                                    lambda r: f"Account records read again ({_lookups(r)})"),

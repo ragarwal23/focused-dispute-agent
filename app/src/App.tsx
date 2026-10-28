@@ -21,10 +21,10 @@ export interface ThreadState {
   threadId: string | null; accountId: string; channel: string; label: string | undefined; prefill: string;
   turns: Turn[]; notice: string | null;
 }
-interface State { inbox: InboxItem[]; accounts: Account[]; runs: ThreadSummary[]; thread: ThreadState | null }
+interface State { inbox: InboxItem[]; accounts: Account[]; runs: ThreadSummary[] | null; thread: ThreadState | null }  // runs: null until loaded
 type Action =
   | { type: "loaded"; inbox?: InboxItem[]; accounts?: Account[]; runs?: ThreadSummary[] }
-  | { type: "open"; thread: ThreadState }
+  | { type: "open"; thread: ThreadState | null }
   | { type: "threadId"; id: string }
   | { type: "send"; text: string; kind: RepTurn["kind"] }
   | { type: "event"; event: StreamEvent }
@@ -98,14 +98,14 @@ function age(iso: string | null): string {
 }
 
 export default function App() {
-  const [state, dispatch] = useReducer(reducer, { inbox: [], accounts: [], runs: [], thread: null });
+  const [state, dispatch] = useReducer(reducer, { inbox: [], accounts: [], runs: null, thread: null });
   const [picking, setPicking] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const t = state.thread;
   const busy = t?.turns[t.turns.length - 1]?.role === "assistant" && (t.turns[t.turns.length - 1] as AssistantTurn).streaming;
 
   const refreshRuns = useCallback(() => {
-    api.threads().then((runs) => dispatch({ type: "loaded", runs })).catch(() => undefined);
+    api.threads().then((runs) => dispatch({ type: "loaded", runs })).catch(() => dispatch({ type: "loaded", runs: [] }));
   }, []);
   useEffect(() => {
     Promise.all([api.inbox(), api.accounts()])
@@ -173,7 +173,7 @@ export default function App() {
         </section>
         <section className="call">
           {!picking ? (
-            <button className="ghost" disabled={busy} onClick={() => setPicking(true)}>+ New conversation</button>
+            <button className="ghost" disabled={busy} onClick={() => { dispatch({ type: "open", thread: null }); setPicking(true); }}>+ New conversation</button>
           ) : (
             <label>Which account is calling?
               <select autoFocus defaultValue="" onChange={(e) => { if (e.target.value) { openWith(e.target.value, "Phone call", ""); setPicking(false); } }}>
@@ -184,9 +184,9 @@ export default function App() {
           )}
         </section>
         <section>
-          <h2>Recent runs <span className="count">{state.runs.filter((r) => r.status !== "finished").length} open</span></h2>
+          <h2>Recent runs {state.runs && <span className="count">{state.runs.filter((r) => r.status !== "finished").length} open</span>}</h2>
           <ul className="runs">
-            {state.runs.map((r) => (
+            {state.runs?.map((r) => (
               <li key={r.thread_id}>
                 <button disabled={busy} onClick={() => reopen(r)} className={t?.threadId === r.thread_id ? "active" : ""}>
                   <span className="row-top"><code className="acct">{r.account_id}</code><span className="muted">{age(r.updated_at)}</span></span>
@@ -197,7 +197,8 @@ export default function App() {
                 </button>
               </li>
             ))}
-            {state.runs.length === 0 && <li className="muted empty">No runs yet.</li>}
+            {!state.runs && <li className="muted empty">Loading<span className="dots" /></li>}
+            {state.runs?.length === 0 && <li className="muted empty">No runs yet.</li>}
           </ul>
         </section>
       </aside>
@@ -205,10 +206,11 @@ export default function App() {
       <main className="pane">
         {t ? (
           <Thread key={`${t.accountId}-${t.label ?? ""}-${t.threadId ?? "new"}`} thread={t} onSend={send} onDecide={decide}
+            customer={state.accounts.find((a) => a.account_id === t.accountId)?.customer}
             onDismiss={() => dispatch({ type: "dismiss" })} />
         ) : (
           <div className="blank">
-            <h2>Pick a complaint from the inbox</h2>
+            <h2>{picking ? "Choose the account that is calling" : "Pick a complaint from the inbox"}</h2>
             <p>Send it to the assistant as you would describe it to a colleague. It reads the account and the policy,
               cross-checks them, and recommends a route. Nothing is filed until you decide.</p>
           </div>

@@ -19,6 +19,7 @@ Each node is a few lines that call into the folder named after it: account_agent
 from __future__ import annotations
 
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any, Literal, TypedDict
 
@@ -82,6 +83,17 @@ def build_graph(
     """Compile the orchestrator. The model arguments default to the real models; tests pass fakes with .invoke().
 
     `review` needs a checkpointer; the default keeps checkpoints in memory (tests, eval), the CLI passes SQLite."""
+    saver = checkpointer or InMemorySaver(serde=SERDE)
+    minting, minted = threading.Lock(), set[str]()  # the web server files from worker threads
+
+    def filed() -> set[str]:
+        """Case IDs already minted: by this graph, and by earlier runs saved in the checkpointer."""
+        ids = set(minted)
+        for t in saver.list(None):
+            case = t.checkpoint["channel_values"].get("case")
+            if case is not None and case.created:
+                ids.add(case.case_id)
+        return ids
 
     def classify_node(s: GraphState) -> dict[str, Any]:
         return {"category": classify(s["rep_message"], classify_model)}
@@ -121,7 +133,11 @@ def build_graph(
 
     def case_node(s: GraphState) -> dict[str, Any]:
         route = s["review"].route if s["review"].action == "override" else s["synthesis"].route
-        return {"case": create_review_case(ds, s["account_id"], s["category"], s["derived"], route)}
+        with minting:
+            case = create_review_case(ds, s["account_id"], s["category"], s["derived"], route, filed())
+            if case.created:
+                minted.add(case.case_id)
+        return {"case": case}
 
     g = StateGraph(GraphState)
     g.add_node("classify", classify_node)
@@ -146,7 +162,7 @@ def build_graph(
     g.add_edge("account_agent_followup", "derive_states_followup")  # its own nodes, so the join barrier is not hit
     g.add_edge("derive_states_followup", "sync")
     g.add_edge("create_review_case", END)
-    return g.compile(checkpointer=checkpointer or InMemorySaver(serde=SERDE))
+    return g.compile(checkpointer=saver)
 
 
 def sqlite_checkpointer(path: Path) -> SqliteSaver:

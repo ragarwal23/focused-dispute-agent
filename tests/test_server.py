@@ -60,6 +60,10 @@ def test_run_streams_to_pause(make, ds):
     assert ev[-1]["type"] == "pause" and ev[-1]["thread_id"] == r.headers["x-thread-id"]
     assert ev[-1]["request"]["route"] == "adjustment_review" and ev[-1]["request"]["can_answer"] is False
     assert all(e["type"] == "step" for e in ev[:-1]) and ev[0]["key"] == "classify"
+    src = ev[-1]["request"]["sources"]
+    assert set(src) == {*ev[-1]["request"]["draft"]["event_ids"], *ev[-1]["request"]["draft"]["policy_source_ids"]}
+    assert {x["kind"] for x in src.values()} == {"event", "policy"}
+    assert all(x["title"] for x in src.values() if x["kind"] == "policy")
 
 
 def test_resume_streams_to_result(make, ds):
@@ -69,6 +73,7 @@ def test_resume_streams_to_result(make, ds):
     assert ev[-1]["type"] == "result" and ev[-1]["case"]["case_id"] == "C-004" and ev[-1]["case"]["created"] is True
     assert ev[-1]["review"]["action"] == "approve" and ev[-1]["route"] == "adjustment_review" and ev[-1]["draft"]
     assert "gate" not in ev[-1]
+    assert ev[-1]["case"]["disputed_event_id"] in ev[-1]["sources"]
     assert client.post(f"/api/threads/{tid}/resume", json={"action": "approve"}).status_code == 409
 
 

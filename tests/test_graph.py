@@ -3,11 +3,12 @@
 from datetime import datetime
 
 from dispute_agent.sync.synthesize import Draft
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
 
 from dispute_agent.orchestrator.classify import CategoryChoice
 from dispute_agent.config import WORLD_TODAY
-from dispute_agent.orchestrator.graph import build_graph, initial_graph_state
+from dispute_agent.orchestrator.graph import SERDE, build_graph, initial_graph_state
 from dispute_agent.orchestrator.run import investigate, thread_config
 from dispute_agent.policy_agent.agent import PolicyReading
 from dispute_agent.review.review import APPROVE
@@ -16,6 +17,16 @@ from test_policy_agent import FakeModel, rule
 from test_sync import account_state
 
 NORMAL = ["classify", "account_agent", "policy_agent", "derive_states", "sync", "synthesize", "review", "create_review_case"]
+FANOUT = ["account_agent", "policy_agent"]
+
+
+def in_order(order):
+    """The two agents run in one parallel step, so either may report first: put that pair in NORMAL's order."""
+    out = list(order)
+    for i in range(len(out) - 1):
+        if set(out[i:i + 2]) == set(FANOUT):
+            out[i:i + 2] = FANOUT
+    return out
 
 
 class FakeAccountAgent:
@@ -31,7 +42,7 @@ class FakeAccountAgent:
 
 def run(ds, sections, agent, sid="S-02", decisions=(), checkpointer=None, synthesize_model=None):
     """Stream the graph with fakes for the three single-call models, answering each pause with the next decision
-    (then approve); return the node order, the final state, the fakes and the graph."""
+    (then approve); return the node order (the parallel pair in NORMAL's order), the final state, the fakes and the graph."""
     s = ds.scenarios[sid]
     classify_model = FakeModel(CategoryChoice(category=s.expected_category, reason="x"))
     policy_model = FakeModel(PolicyReading(rules=[rule(i) for i in s.expected_policy_ids], summary="x"))
@@ -49,7 +60,7 @@ def run(ds, sections, agent, sid="S-02", decisions=(), checkpointer=None, synthe
             else:
                 final = chunk
         step = Command(resume=(decisions.pop(0) if decisions else APPROVE).model_dump()) if paused else None
-    return order, final, agent, policy_model, graph
+    return in_order(order), final, agent, policy_model, graph
 
 
 def test_graph_clean(ds, sections):
@@ -62,6 +73,14 @@ def test_graph_clean(ds, sections):
 
     inv = investigate(ds, sections, agent, "A-1002", ds.scenarios["S-02"].rep_message, ["t"], "S-02", graph=graph)
     assert inv.case.route == "adjustment_review"
+
+
+def test_case_ids_are_unique_across_runs(ds, sections):
+    """A second graph on the same checkpoints (a restarted server, the CLI) reads the IDs already filed and mints the next."""
+    saver = InMemorySaver(serde=SERDE)
+    first = run(ds, sections, FakeAccountAgent(account_state(oracle_findings(ds.scenarios["S-02"]))), checkpointer=saver)[1]
+    second = run(ds, sections, FakeAccountAgent(account_state(oracle_findings(ds.scenarios["S-05"]))), "S-05", checkpointer=saver)[1]
+    assert (first["case"].case_id, second["case"].case_id) == ("C-004", "C-005")
 
 
 def test_account_missing_goes_on(ds, sections):
@@ -91,3 +110,8 @@ def test_budget_hit_is_recorded(ds, sections):
     order, final, agent, policy_model, _ = run(ds, sections, agent)
     assert order == NORMAL and agent.calls == 1 and policy_model.calls == 1
     assert final["sync"].budget_hit is True and final["sync"].lean == "need_more_evidence"
+
+
+def test_in_order_fixes_only_the_parallel_pair():
+    assert in_order(["classify", "policy_agent", "account_agent", "derive_states"]) == NORMAL[:4]
+    assert in_order(NORMAL) == NORMAL

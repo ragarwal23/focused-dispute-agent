@@ -69,6 +69,26 @@ def make_app(ds: Dataset, sections: dict[str, PolicySection], graph: Any, trace_
     def pending(snap: Any) -> list[dict[str, Any]]:
         return [i.value for task in snap.tasks for i in task.interrupts]
 
+    def sources(draft: dict[str, Any] | None, *more: str | None) -> dict[str, dict[str, Any]]:
+        """What each cited ID is, for the chips' popovers. A memo is the record's own text: the page shows it as data."""
+        ids = [*(draft or {}).get("event_ids", []), *(draft or {}).get("policy_source_ids", []), *more]
+        out: dict[str, dict[str, Any]] = {}
+        for i in ids:
+            if (e := ds.events.get(i or "")) is not None:
+                out[i] = {"kind": "event", "type": e.type, "date": e.occurred_at.date().isoformat(), "amount": e.amount,
+                          "channel": e.channel, "memo": e.memo}
+            elif (p := sections.get(i or "")) is not None:
+                out[i] = {"kind": "policy", "title": p.heading, "doc": f"{p.doc_title} v{p.version}",
+                          "effective_from": p.effective_from.isoformat(), "status": p.status}
+        return out
+
+    def with_sources(request: dict[str, Any]) -> dict[str, Any]:
+        return {**request, "sources": sources(request.get("draft"))}
+
+    def result(thread_id: str, values: dict[str, Any]) -> dict[str, Any]:
+        out = result_event(thread_id, values)
+        return {**out, "sources": sources(out["draft"], out["case"]["disputed_event_id"])}
+
     def summary(thread_id: str, snap: Any) -> dict[str, Any]:
         v, waiting = snap.values, pending(snap)
         status = "finished" if not snap.next else "paused" if waiting else "stopped"
@@ -92,10 +112,10 @@ def make_app(ds: Dataset, sections: dict[str, PolicySection], graph: Any, trace_
                     for event in narrate(ns, mode, data):
                         if event["type"] == "pause":
                             paused = True
-                            event["thread_id"] = thread_id
+                            event.update(thread_id=thread_id, request=with_sources(event["request"]))
                         q.put(event)
                 if not paused:
-                    q.put(result_event(thread_id, graph.get_state(thread_config(thread_id)).values))
+                    q.put(result(thread_id, graph.get_state(thread_config(thread_id)).values))
             except Exception as exc:  # API error, network: the checkpoint keeps every finished step
                 q.put({"type": "error", "thread_id": thread_id, "message": f"{type(exc).__name__}: {exc}"})
             finally:
@@ -142,8 +162,8 @@ def make_app(ds: Dataset, sections: dict[str, PolicySection], graph: Any, trace_
         out = summary(thread_id, snap)
         v, waiting = snap.values, pending(snap)
         out["message"] = v.get("rep_message")
-        out["request"] = waiting[0] if waiting else None
-        out["result"] = result_event(thread_id, v) if out["status"] == "finished" else None
+        out["request"] = with_sources(waiting[0]) if waiting else None
+        out["result"] = result(thread_id, v) if out["status"] == "finished" else None
         return out
 
     @app.post("/api/threads")

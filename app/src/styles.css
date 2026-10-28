@@ -65,7 +65,7 @@ button.ghost:hover:not(:disabled), button.ghost.on { border-color: var(--ink); b
 .blank h2 { font-size: 30px; color: var(--ink); margin-bottom: 12px; }
 .thread { height: 100%; display: flex; flex-direction: column; max-width: 860px; width: 100%; margin: 0 auto; padding: 0 32px; }
 .thread-head { display: flex; align-items: baseline; gap: 14px; border-bottom: 1px solid var(--rule); padding: 22px 0 12px; }
-.tid { font-size: 11px; margin-left: auto; }
+.customer { font-size: 16px; font-weight: 600; }
 .turns { flex: 1; overflow-y: auto; padding: 22px 0 12px; display: flex; flex-direction: column; gap: 22px; }
 .hint { color: var(--muted); font-size: 13.5px; margin: 0; }
 .rep { display: flex; justify-content: flex-end; animation: rise 0.25s ease both; }
@@ -100,6 +100,16 @@ button.ghost:hover:not(:disabled), button.ghost.on { border-color: var(--ink); b
 .source-row { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; font-size: 13px; }
 .source-row .muted { width: 56px; font-size: 12px; }
 .chip { background: var(--paper-2); border: 1px solid var(--rule); border-radius: 3px; padding: 1px 6px; }
+.src { position: relative; display: inline-block; outline: none; }
+.src .chip { cursor: help; }
+.src:hover .chip, .src:focus .chip { border-color: var(--accent); }
+.pop { display: none; position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 10; width: max-content; max-width: 320px;
+  flex-direction: column; gap: 3px; background: var(--card); border: 1px solid var(--rule); border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.12); padding: 10px 12px; font-family: var(--sans); font-size: 13px; color: var(--ink); white-space: normal; }
+.src:hover .pop, .src:focus .pop { display: flex; }
+.pop span { color: var(--ink-2); }
+.memo { margin: 4px 0 0; padding: 6px 8px; border-left: 3px solid var(--warm); background: var(--warm-soft); font-family: var(--mono); font-size: 12px; white-space: pre-wrap; }
+.memo .eyebrow { display: block; margin-bottom: 2px; font-family: var(--sans); }
 .actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; border-top: 1px dashed var(--rule); padding-top: 12px; }
 .actions a { color: var(--accent); font-weight: 600; }
 .subform { display: flex; flex-direction: column; gap: 10px; background: var(--paper); border: 1px solid var(--rule); border-radius: var(--radius); padding: 12px; }

@@ -21,10 +21,15 @@ export interface Draft {
   review_route: Route; event_ids: string[]; policy_source_ids: string[];
   confidence: "high" | "medium" | "low"; open_questions: string[]; case_note: string;
 }
+/** What a cited ID is: an account record or a policy section. A memo is the record's own text, never an instruction. */
+export type Source =
+  | { kind: "event"; type: string; date: string; amount: number | null; channel: string | null; memo: string | null }
+  | { kind: "policy"; title: string; doc: string; effective_from: string; status: "current" | "superseded" };
+export type Sources = Record<string, Source>;
 export interface ReviewRequest {
   thread_label: string; route: Route; existing_case_id: string | null;
   draft: Draft | null; open_questions: string[]; can_answer: boolean;
-  followups: number;
+  followups: number; sources?: Sources;
 }
 export interface CaseResult {
   case_id: string; created: boolean; account_id: string; category: string; disputed_event_id: string | null; route: Route;
@@ -41,7 +46,7 @@ export interface StepEvent {
 export interface PauseEvent { type: "pause"; thread_id: string; request: ReviewRequest }
 export interface ResultEvent {
   type: "result"; thread_id: string; case: CaseResult; review: Decision & { route?: Route | null; reason?: string | null };
-  draft: Draft | null; route: Route;
+  draft: Draft | null; route: Route; sources?: Sources;
 }
 export interface ErrorEvent { type: "error"; thread_id: string; message: string }
 export type StreamEvent = StepEvent | PauseEvent | ResultEvent | ErrorEvent;

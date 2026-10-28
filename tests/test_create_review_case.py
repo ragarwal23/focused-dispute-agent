@@ -2,7 +2,7 @@
 
 import pytest
 
-from dispute_agent.review.create_review_case import create_review_case, find_duplicate
+from dispute_agent.review.create_review_case import create_review_case, find_duplicate, next_case_id
 from test_policy_agent import facts
 
 
@@ -37,3 +37,8 @@ def test_route_is_filed_as_given(ds):
     _, derived = facts(ds, s)
     case = create_review_case(ds, s.account_id, s.expected_category, derived, "manual_escalation")
     assert case.route == "manual_escalation" and case.created is True
+
+
+def test_next_case_id_skips_filed(ds):
+    assert next_case_id(ds) == "C-004"
+    assert next_case_id(ds, ["C-004", "C-009", "junk"]) == "C-010"
