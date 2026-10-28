@@ -1,6 +1,6 @@
 """The web app's server: the rep's inbox, and the graph's steps streamed to the page as they happen.
 
-    python -m app.server [--data data] [--port 8000]      then, in app/:  npm run dev  (http://localhost:5173)
+    python -m app.server [--data data] [--port 8000] [--no-browser]      (or: make run)
 
 One FastAPI app, made by `make_app(ds, sections, graph)` so tests can pass the fake graph. A run is the same graph
 the CLI runs, with the same SQLite checkpoints (runs/checkpoints.sqlite), so a thread paused here can be resumed
@@ -15,14 +15,17 @@ from __future__ import annotations
 import argparse
 import json
 import queue
+import socket
 import threading
 import uuid
+import webbrowser
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from langgraph.types import Command
 from pydantic import BaseModel
 
@@ -37,6 +40,7 @@ TAGS = ["slice=investigate", "web"]
 CHANNEL = {"clean": "Customer message", "messy": "Call notes"}
 SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 MAX_THREADS = 50  # the paused-runs list shows the newest this many
+APP_DIST = Path(__file__).parent / "dist"  # the built page (`make build`), committed so running it needs no Node
 
 
 class NewThread(BaseModel):
@@ -56,7 +60,22 @@ def _sse(event: dict[str, Any]) -> str:
     return f"data: {json.dumps(event, default=str)}\n\n"
 
 
-def make_app(ds: Dataset, sections: dict[str, PolicySection], graph: Any, trace_url: Callable[[str], str] = langsmith_url) -> FastAPI:
+def free_port(start: int, tries: int = 20) -> int:
+    """The first port from `start` that binds on 127.0.0.1, so another app on 8000 doesn't stop this one."""
+    for port in range(start, start + tries):
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", port))
+            except OSError:
+                continue
+            return port
+    raise SystemExit(f"no free port in {start}-{start + tries - 1}; pass --port")
+
+
+def make_app(
+    ds: Dataset, sections: dict[str, PolicySection], graph: Any, trace_url: Callable[[str], str] = langsmith_url,
+    static_dir: Path | None = None,
+) -> FastAPI:
     app = FastAPI(title="Dispute assistant")
     run_ids: dict[str, str] = {}  # thread_id -> the latest LangSmith run ID, for the trace link; lost on restart
 
@@ -197,6 +216,8 @@ def make_app(ds: Dataset, sections: dict[str, PolicySection], graph: Any, trace_
         except Exception as exc:
             raise HTTPException(404, f"trace not available yet: {type(exc).__name__}") from exc
 
+    if static_dir is not None and (static_dir / "index.html").exists():
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="page")  # last, so /api/* wins
     return app
 
 
@@ -211,12 +232,29 @@ def main(argv: list[str] | None = None) -> None:
 
     p = argparse.ArgumentParser(prog="python -m app.server", description="The rep's inbox and assistant (localhost only)")
     p.add_argument("--data", default="data", help="folder with the four .xlsx files")
-    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--port", type=int, default=8000, help="first port to try; the next free one is used if it's taken")
+    p.add_argument("--no-browser", action="store_true", help="don't open the page in a browser")
     args = p.parse_args(argv)
     ds = load_dataset(args.data)
     sections = load_policies(Path(args.data) / "policies")
     graph = build_graph(ds, sections, build_account_agent(ds), checkpointer=sqlite_checkpointer(CHECKPOINTS))
-    uvicorn.run(make_app(ds, sections, graph), host="127.0.0.1", port=args.port)
+    port = free_port(args.port)
+    url = f"http://127.0.0.1:{port}"
+    if port != args.port:
+        print(f"Port {args.port} is taken, using {port}.")
+    if not (APP_DIST / "index.html").exists():
+        print("The page isn't built (app/dist): run `make build`, or `cd app && npm run dev`. Serving the API only.")
+    print(f"Dispute desk: {url}")
+    if not args.no_browser:
+        threading.Timer(1.0, _open, (url,)).start()
+    uvicorn.run(make_app(ds, sections, graph, static_dir=APP_DIST), host="127.0.0.1", port=port)
+
+
+def _open(url: str) -> None:
+    try:
+        webbrowser.open(url)
+    except Exception:
+        pass  # headless: the printed URL is enough
 
 
 if __name__ == "__main__":

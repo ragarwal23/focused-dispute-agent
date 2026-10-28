@@ -52,30 +52,40 @@ How I'd run this in production: [evaluation README § In production](dispute_age
 
 ## Quickstart
 
-**1. Set up:**
+**1. Set up**, then add your Anthropic and LangSmith keys to `.env`:
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+make setup
+```
+
+<details><summary>Without <code>make</code></summary>
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # add your Anthropic and LangSmith keys
+cp .env.example .env
 ```
 
-**2. Run the web app** (needs Node):
+</details>
+
+**2. Run the web app** (no Node needed):
 
 ```bash
-python -m app.server                  # terminal 1: the API on 127.0.0.1:8000
-cd app && npm ci && npm run dev       # terminal 2: open http://localhost:5173
+make run        # or: .venv/bin/python -m app.server
 ```
+
+The inbox opens in your browser, and the terminal prints its address.
 
 1. Pick a complaint from the inbox. It holds the 12 dev scenarios by account number, never the held-out four or the answer key.
 2. Send it. The reply shows each step as it runs, then the recommended queue, the case note and its sources.
 3. Approve it, override the queue with a reason, or, on `need_more_evidence`, answer the open questions.
 
-"New conversation" starts a complaint on any account. If port 8000 is taken, run `python -m app.server --port 8010` and `API_PORT=8010 npm run dev`.
+"New conversation" starts a complaint on any account. It uses port 8000, or the next free one. Working on the page itself? `cd app && npm run dev` (Node) gives hot reload on :5173.
 
-**Or from the terminal** (no Node):
+**Or from the terminal:**
 
 ```bash
+source .venv/bin/activate
 python -m dispute_agent ask A-1002 "cust got hit w a late fee on oct but says he paid over the phone last tues"
 python -m dispute_agent resume <thread> --approve   # ask prints the thread ID
 ```

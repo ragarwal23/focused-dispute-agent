@@ -7,5 +7,4 @@ __pycache__/
 .DS_Store
 **/~$*
 app/node_modules/
-app/dist/
 app/*.tsbuildinfo

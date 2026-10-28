@@ -1,11 +1,12 @@
 """The web server's HTTP contract, on the fake graph: inbox, streaming to pause and result, the refusals, the thread list."""
 
 import json
+import socket
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.server import make_app
+from app.server import free_port, make_app
 from test_derive import oracle_findings
 from test_graph import FakeAccountAgent
 from test_review import graph_for
@@ -28,9 +29,9 @@ class FlakyAgent(FakeAccountAgent):
 
 @pytest.fixture
 def make(ds, sections):
-    def _make(agent=None, trace_url=lambda run_id: f"https://smith.example/r/{run_id}"):
+    def _make(agent=None, trace_url=lambda run_id: f"https://smith.example/r/{run_id}", static_dir=None):
         agent = agent or FakeAccountAgent(account_state(oracle_findings(ds.scenarios["S-02"])))
-        return TestClient(make_app(ds, sections, graph_for(ds, sections, "S-02", agent), trace_url))
+        return TestClient(make_app(ds, sections, graph_for(ds, sections, "S-02", agent), trace_url, static_dir))
     return _make
 
 
@@ -138,3 +139,40 @@ def test_trace_404_without_run(make, ds):
     client = make(trace_url=not_ingested)
     tid = post(client, ds).headers["x-thread-id"]
     assert client.get(f"/api/threads/{tid}/trace").status_code == 404
+
+
+def test_serves_page_from_static_dir(make, tmp_path):
+    (tmp_path / "index.html").write_text('<div id="root"></div>')
+    r = make(static_dir=tmp_path).get("/")
+    assert r.status_code == 200 and '<div id="root">' in r.text
+
+
+def test_api_not_shadowed_by_page(make, tmp_path):
+    (tmp_path / "index.html").write_text('<div id="root"></div>')
+    r = make(static_dir=tmp_path).get("/api/inbox")
+    assert r.status_code == 200 and "items" in r.json()
+
+
+def test_no_static_dir_means_no_page(make):
+    client = make()
+    assert client.get("/").status_code == 404 and client.get("/api/inbox").status_code == 200
+
+
+def test_free_port_skips_taken_port():
+    with socket.socket() as taken:
+        taken.bind(("127.0.0.1", 0))
+        taken.listen()
+        p = taken.getsockname()[1]
+        port = free_port(p)
+        assert port != p
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", port))
+
+
+def test_free_port_gives_up(monkeypatch):
+    def refuse(self, addr):
+        raise OSError("in use")
+
+    monkeypatch.setattr(socket.socket, "bind", refuse)
+    with pytest.raises(SystemExit, match="9000-9002"):
+        free_port(9000, tries=3)
