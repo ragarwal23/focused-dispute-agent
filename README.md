@@ -2,7 +2,7 @@
 
 A LangGraph agent that investigates a customer's payment dispute and drafts a review case for a human rep. The lender (Agarwal Motor Finance) and all its data are fictional.
 
-**[Screen recording](#)** _(link to add)_
+**[▶ Watch the 2-minute demo](docs/demo.mp4)** — the web app investigating a complaint end to end, from intake to the rep's review.
 
 ## What it does
 
