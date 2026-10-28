@@ -114,6 +114,7 @@ def build_graph(
     def synthesize_node(s: GraphState) -> dict[str, Any]:
         return {"synthesis": run_synthesize(
             s["category"], s["rep_message"], s["account"], s["derived"], s["policy"], s["sync"], model=synthesize_model,
+            account_id=s["account_id"],
         )}
 
     def review_node(s: GraphState) -> dict[str, Any]:

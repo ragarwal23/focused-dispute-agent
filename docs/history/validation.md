@@ -146,8 +146,8 @@ Live: three dev passes, `eval_20261027T182359Z.json`, `T182756Z.json`, `T183153Z
 The confusion matrix was identical on all three and identical to F1b's: the only off-diagonal cell is S-11
 (`need_more_evidence` → `explain_events`).
 
-Release workbook [`release_2026-10-27_no-gate.xlsx`](../dispute_agent/evaluation/reports/release_2026-10-27_no-gate.xlsx)
-renders pass T183153Z with a `Compare` sheet against the phase 2 release capture (`eval_20261027T174341Z.json`) over
+Release workbook `release_2026-10-27_no-gate.xlsx` (since dropped from the repo; see the evaluation README)
+rendered pass T183153Z with a `Compare` sheet against the phase 2 release capture (`eval_20261027T174341Z.json`) over
 the 12 dev scenarios: route 10 → 11, evidence, policy and confidence 11 → 12, grade 10 → 11. All four changes are S-07,
 which wrote no draft in the release capture and wrote a correct one in all three passes here. **That is run-to-run
 variance in synthesize, not an effect of this change**: synthesize runs before the point where the gate was, so

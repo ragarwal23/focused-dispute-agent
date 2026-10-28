@@ -107,6 +107,8 @@ def score(s: Scenario, inv: Investigation, ds: Dataset) -> dict[str, Any]:
         "draft_events_ok": draft is not None and required <= set(draft.event_ids) and not (forbidden & set(draft.event_ids)),
         "draft_policy_ok": draft is not None and expected_policy <= set(draft.policy_source_ids),
         "synth_errors": inv.synthesis.errors,
+        "synth_redactions": inv.synthesis.redactions,
+        "synth_attempts": inv.synthesis.attempts,
         # the graph's shape and its one write
         "trajectory_ok": account["tool_calls_made"] <= TOOL_BUDGET,
         "action_ok": inv.case.created is (s.expected_existing_case_id is None)

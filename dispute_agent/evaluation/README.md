@@ -6,10 +6,10 @@ release workbook. The same axes score every scenario; only the golden values dif
 scorer is proven on the key itself (`eval --producer golden_echo`, 16/16 PASS) and on an empty answer (`empty_stub`,
 exit 1).
 
-**Results: [docs/results.md](../../docs/results.md)**, the verdict matrix with a trace link per scenario, rendered by `report --out docs/results.md`; the same run as [the release experiment in LangSmith, public](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737), one row per scenario with its trace, the six code axes and
+**Results: [docs/results.md](../../docs/results.md)**, the verdict matrix with a trace link per scenario, rendered by `report --out docs/results.md`; the same run as [the release experiment in LangSmith, public](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=0cb67e9d-df79-48fe-a951-19f69515bf77), one row per scenario with its trace, the six code axes and
 the four judge scores. Also available locally:
-[`reports/release_2026-10-27_v0.8.xlsx`](reports/release_2026-10-27_v0.8.xlsx), the same run as a workbook that adds the
-`Slices` and `Compare` sheets LangSmith does not draw. In LangSmith a PARTIAL scores 0.5 and a judge score shows as a fraction of 3 (0.67 is 2 of 3; hover it for the reason); the workbook counts
+[`reports/release_2026-10-28_v0.9.xlsx`](reports/release_2026-10-28_v0.9.xlsx), the same run as a workbook that adds the
+`Slices` and `Compare` sheets LangSmith does not draw (its `Compare` is against the 2026-10-27 release, [experiment](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737)). The two runs differ only on S-07, which wrote no draft on 10-28 (its known flake) and a draft on 10-27. In LangSmith a PARTIAL scores 0.5 and a judge score shows as a fraction of 3 (0.67 is 2 of 3; hover it for the reason); the workbook counts
 PASS and shows 0-3.
 
 ## Files
@@ -26,7 +26,7 @@ PASS and shows 0-3.
 | [`experiment.py`](experiment.py) | The LangSmith side: the golden dataset (created once, never deleted, since deleting it deletes its experiments), `eval --experiment`, `judge --experiment`, and `langsmith-sync` to replay an older JSON |
 | [`validate.py`](validate.py) | `stability` over repeated evals and LangSmith `trace` shapes |
 | [`labels.xlsx`](labels.xlsx) | The 12 dev case notes of the 2026-10-27 release with four empty 0-3 columns for Rachit to score (see Calibration) |
-| [`reports/`](reports/) | One committed workbook per release. **[`release_2026-10-27_v0.8.xlsx`](reports/release_2026-10-27_v0.8.xlsx) is the current one**, the local copy of the linked experiment. The other two are earlier graphs, kept for the history docs: `release_2026-10-27.xlsx` (with the gate) and `release_2026-10-27_no-gate.xlsx` (gate removed, sync retries still in) |
+| [`reports/`](reports/) | One committed workbook per release. **[`release_2026-10-28_v0.9.xlsx`](reports/release_2026-10-28_v0.9.xlsx) is the current one**, the local copy of the linked experiment, with `Compare` against [`release_2026-10-27_v0.8.xlsx`](reports/release_2026-10-27_v0.8.xlsx). The two earlier workbooks that the history docs mention (`release_2026-10-27.xlsx`, with the gate, and `release_2026-10-27_no-gate.xlsx`) were dropped from the repo once the results page replaced them; their run files are still in `runs/` locally |
 
 ## The golden workbook
 
@@ -64,7 +64,7 @@ same rows offline from LangSmith's point of view, traced to `LANGSMITH_PROJECT` 
 
 `eval --split all` runs dev and held-out together; the JSON it writes carries every field the workbook and the judge
 need plus `model_id`, `golden_path` and `producer`. `runs/` is git-ignored: the JSONs stay local, the rendered workbook
-and `labels.xlsx` are committed by hand. The held-out four (`S-04`, `S-08`, `S-12`, `S-16`) were run twice after tuning,
+and `labels.xlsx` are committed by hand. The held-out four (`S-04`, `S-08`, `S-12`, `S-16`) have been run three times after tuning,
 with nothing changed between the passes; nothing is tuned on them, and they are never in `labels.xlsx`.
 
 ## The metrics
@@ -161,7 +161,12 @@ reason, the note calls the "77" reference matches coincidental where the key say
 **What this calibration does not show.** Ten of twelve notes are near-perfect, so agreement is mostly at the ceiling:
 it proves the judge does not invent failures, not that it would catch a bad note. No labelled note leaks another
 customer's details or promises a refund, so the labels never tested `no_leaks_or_promises`; in the v0.8 release it
-did catch one real leak, S-07's note naming the other customer's account. The next step is a set of
+did catch one real leak, S-07's note naming the other customer's account, event and payment reference, which every
+code check had passed. Since 2026-10-28 `run_synthesize` redacts those details from the note in code and the eval JSON
+records them as `synth_redactions`. Measured on three single-scenario S-07 runs (`eval_20261028T155541Z`, `T155558Z`,
+`T155618Z`): the redaction fired in two, and the judge scored the redacted note 3 on `no_leaks_or_promises` (the 10-27
+note scored 1) and 2 on `ready_to_file`, since the `[redacted ...]` placeholders read like template text
+(`judge_20261028T155758Z`). The next step is a set of
 deliberately broken notes (an invented amount, a mention of E-0135, a promised refund, a right route with a wrong
 reason) graded by the judge to show it drops the right axis. Not built.
 

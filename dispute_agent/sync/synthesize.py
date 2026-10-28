@@ -5,13 +5,18 @@ Account Agent's summaries, the checked facts, the evidence events, the kept poli
 its lean. One Sonnet call with structured output returns a `Draft`: route, cited event and section IDs,
 confidence, open questions and a short case note. The output schema is built per call so the two ID fields
 accept only the IDs shown: the evidence events are already on this account (derive_states) and the rules already
-in force (sync), so an unshown or off-account ID cannot be emitted. `route` is what the rep is asked to approve:
-the draft's route, or manual_escalation when there is no draft. A failed call becomes an error, never an exception.
+in force (sync), so an unshown or off-account ID cannot be emitted. The prose is checked too: `redact_prose`
+strips another customer's account ID, an unshown event ID or another account's payment reference from the case note
+and open questions (policy LF.v3.s6: never share another customer's account information), and records what it removed.
+A rejected draft (an unshown ID, a malformed answer) gets one more call, with the rejection appended to the case, then
+the run gives up: at most `MAX_ATTEMPTS` calls, never a loop. `route` is what the rep is asked to approve: the draft's
+route, or manual_escalation when there is no draft. A failed call becomes an error, never an exception.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -40,6 +45,7 @@ case_note: three to five plain sentences a rep can edit and file: what the custo
 
 
 Confidence = Literal["high", "medium", "low"]
+MAX_ATTEMPTS = 2  # one call, and one more when the first draft is rejected
 
 
 class Draft(BaseModel):  # no docstring: pydantic would send it to the LLM as the schema description
@@ -55,6 +61,36 @@ class SynthesisResult(BaseModel):
     draft: Draft | None = None
     errors: list[str] = []
     route: Route = "manual_escalation"  # the recommended route: the draft's, or manual_escalation without a draft
+    redactions: list[str] = []  # other-account details removed from the prose, in the order found
+    attempts: int = 1  # LLM calls made, 1 or MAX_ATTEMPTS; `errors` holds every rejected attempt, draft or not
+
+
+ID_PATTERN = re.compile(r"\b[AE]-\d{4}\b")
+
+
+def redact_prose(text: str, account_id: str | None, shown_event_ids: list[str], other_references: list[str]) -> tuple[str, list[str]]:
+    """Replace another customer's account ID, an unshown event ID or another account's reference in `text`.
+
+    Plain code, no LLM: the schema keeps off-account IDs out of `event_ids`, this keeps them out of the sentences.
+    Returns the new text and the tokens removed, in order of first appearance.
+    """
+    removed: list[str] = []
+
+    def _id(m: re.Match) -> str:
+        token = m.group(0)
+        if token.startswith("A-") and (account_id is None or token == account_id):
+            return token
+        if token.startswith("E-") and token in shown_event_ids:
+            return token
+        removed.append(token)
+        return "[another customer's account]" if token.startswith("A-") else "[redacted event ID]"
+
+    text = ID_PATTERN.sub(_id, text)
+    for ref in other_references:
+        if ref and ref in text:
+            removed.append(ref)
+            text = text.replace(ref, "[redacted reference]")
+    return text, list(dict.fromkeys(removed))
 
 
 def _render_rule(r: RuleReading) -> str:
@@ -121,15 +157,40 @@ def run_synthesize(
     synced: SyncResult,
     model: Any = None,
     config: dict | None = None,
+    account_id: str | None = None,
 ) -> SynthesisResult:
-    """Render, call once, and turn any failure into an error and manual_escalation (D5). Never raises."""
+    """Render, call once (twice if the first draft is rejected), and turn a final failure into an error and
+    manual_escalation (D5). Never raises."""
+    events, rules = [e.event_id for e in derived.evidence_events], [r.section_id for r in synced.rules]
+    seed = render_case(category, rep_message, account, derived, policy, synced)
+    errors: list[str] = []
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            draft = synthesize(seed, model, config, draft_schema(events, rules))
+            # a schema can't say "no IDs allowed", so when nothing was shown the IDs are checked here
+            if unshown := sorted((set(draft.event_ids) - set(events)) | (set(draft.policy_source_ids) - set(rules))):
+                raise ValueError(f"cited IDs that were not shown: {unshown}")
+            break
+        except Exception as exc:
+            errors.append(f"synthesize failed: {type(exc).__name__}: {exc}")
+            if attempt == MAX_ATTEMPTS:
+                return SynthesisResult(errors=errors, attempts=attempt)
+            seed += (f"\n\nPrevious draft rejected: {type(exc).__name__}: {str(exc)[:300]}\n"
+                     f"Cite only these event IDs: {json.dumps(events)} and these section IDs: {json.dumps(rules)}.")
     try:
-        events, rules = [e.event_id for e in derived.evidence_events], [r.section_id for r in synced.rules]
-        seed = render_case(category, rep_message, account, derived, policy, synced)
-        draft = synthesize(seed, model, config, draft_schema(events, rules))
-        # a schema can't say "no IDs allowed", so when nothing was shown the IDs are checked here
-        if unshown := sorted((set(draft.event_ids) - set(events)) | (set(draft.policy_source_ids) - set(rules))):
-            raise ValueError(f"cited IDs that were not shown: {unshown}")
-        return SynthesisResult(draft=draft, route=draft.review_route)
-    except Exception as exc:
-        return SynthesisResult(errors=[f"synthesize failed: {type(exc).__name__}: {exc}"])
+        # the prose: another customer's account ID, event ID or payment reference must not reach the rep's note
+        account_id = account_id or (derived.evidence_events[0].account_id if derived.evidence_events else None)
+        matches = account["findings"].other_account_matches if account and account.get("findings") else []
+        shown_refs = {e.reference for e in derived.evidence_events if e.reference}
+        other_refs = [m.reference for m in matches if m.reference and m.reference not in rep_message and m.reference not in shown_refs]
+        note, removed = redact_prose(draft.case_note, account_id, events, other_refs)
+        questions = []
+        for q in draft.open_questions:
+            q, more = redact_prose(q, account_id, events, other_refs)
+            questions.append(q)
+            removed += more
+        draft = draft.model_copy(update={"case_note": note, "open_questions": questions})
+        return SynthesisResult(draft=draft, route=draft.review_route, redactions=list(dict.fromkeys(removed)),
+                               attempts=attempt, errors=errors)
+    except Exception as exc:  # redaction is plain string work; this is a guard, not an expected path
+        return SynthesisResult(errors=[*errors, f"synthesize failed: {type(exc).__name__}: {exc}"], attempts=attempt)

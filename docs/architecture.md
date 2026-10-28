@@ -50,10 +50,10 @@ Code: [`dispute_agent/orchestrator/`](../dispute_agent/orchestrator/)
 | **Track state** | Code | One typed state object; each step adds its own fields (see Graph state below) |
 | **Handle failures** | Code | A budget hit, the exact text of a tool error, or "found nothing useful" is recorded in state and the run continues; that finding counts as unknown |
 | **Sync** | Code | Joins both agents' findings, cross-checks them, and records what doesn't line up. See 3c |
-| **Synthesize** | LLM | One structured-output call after sync: route, cited events and sections, facts, confidence, open questions, case note |
+| **Synthesize** | LLM | One structured-output call after sync: route, cited events and sections, facts, confidence, open questions, case note. If the draft is rejected (an ID that was not shown), one more call with the rejection appended, then `manual_escalation` |
 | **Hand off** | Code | The draft and its route go to the review pause. The orchestrator never calls the backend |
 
-**Fixed graph shape.** Every run goes through classify, both agents, sync, synthesize, the review pause and the write. Nothing chooses at runtime which agents to call, and nothing is retried, so every first run has the same shape. Inside the Account Agent the LLM does choose its own tool calls, from one to six; the fixed part is the outer graph. An LLM supervisor that picks agents or loops until satisfied is the next step if evals show it is needed.
+**Fixed graph shape.** Every run goes through classify, both agents, sync, synthesize, the review pause and the write. Nothing chooses at runtime which agents to call, and no node is re-entered, so every first run has the same shape. Inside the Account Agent the LLM does choose its own tool calls, from one to six, and inside synthesize a rejected draft gets one more LLM call (`MAX_ATTEMPTS = 2`); the fixed part is the outer graph. An LLM supervisor that picks agents or loops until satisfied is the next step if evals show it is needed.
 
 **Why in parallel.** The two investigations are independent until sync: the Policy Agent needs only the category and the complaint. Reading policy on the complaint date is right whenever the same policy set was in force on the disputed event's date. Sync checks that in code; when it differs, the run records it and the draft leans to `manual_escalation`. On the current data it never differs, since every disputed event falls after the current late-fee policy's start. The cost is a policy read without the account's facts. The rules are advisory, so that read only shapes the citations and the case note.
 
@@ -209,7 +209,7 @@ One object travels through the graph. Each step reads it and adds its own fields
 | `derived_states`, `policy_date`, `policy_date_basis`, `fact_flags` | Code, after the Account Agent |
 | `policy_findings` (structured rules, the read date, exact error text or "nothing useful") | Policy Agent |
 | `sync` (kept rules, dropped sections, five flags, issues, lean) | Sync |
-| `synthesis` (the draft or the synthesize error, and the recommended route) | Synthesize |
+| `synthesis` (the draft or the synthesize errors, the recommended route, the number of LLM calls made (1 or 2), and any other-account details redacted from the note) | Synthesize |
 | `thread_label`, `review` (the rep's last decision), `followups` (0 or 1), `rep_answer` | Input, the `review` node, the follow-up node |
 | `case` (`case_id`, `created`, account, category, disputed event, final route) | Create review case |
 
@@ -220,7 +220,7 @@ One object travels through the graph. Each step reads it and adds its own fields
 | Trap | Scenarios | First defense | Backstop |
 |---|---|---|---|
 | `injection` | S-04, S-14 | Memo text is wrapped in labeled delimiters, and the prompt says it is data, not instructions | P1–P7 never read memo text: in S-04, `lender_side_failure` rules out the `explain_events` route the memo pushes, and `policy_consistent` catches it |
-| `wrong_account` | S-07 | Reference lookup shows each result's account; `other_account_match` routes to `manual_escalation` | The schema allows only this account's shown events, so E-0135 can't be cited; a draft that tries is rejected and the route falls back to `manual_escalation` |
+| `wrong_account` | S-07 | Reference lookup shows each result's account; `other_account_match` routes to `manual_escalation` | The schema allows only this account's shown events, so E-0135 can't be cited; a draft that tries is rejected, redrafted once with the rejection shown, and if rejected again the route falls back to `manual_escalation` with no note. The prose is checked too: `redact_prose` strips another customer's account ID, an unshown event ID or another account's reference from the note (the Opus judge found this leak in the 2026-10-27 release) |
 | `duplicate` | S-11 | `list_review_cases` | Create review case is idempotent |
 | `out_of_order` | S-02 | Two timestamps per event; lateness judged by `occurred_at` | `late_fee_unwarranted` rules out `explain_events` |
 | `missing_record` | S-06, S-16 | `fact_gap` leads to `need_more_evidence` with `open_questions` | S-06's look-alike on another account is never shown, so the draft can't cite it |
@@ -243,13 +243,13 @@ One object travels through the graph. Each step reads it and adds its own fields
 - **Two agents in parallel, no retries.** The Account and Policy Agents don't need each other to start. Sync records whatever doesn't line up and leans the draft to a cautious route; nothing is sent back, so the run can't loop.
 - **The cost of running in parallel: the policy date.** Policy is effective-dated, and the version that applies is the one in force on the disputed event's date, which only the Account Agent finds. The Policy Agent can't wait for it, so it reads on the complaint date. If a different version was in force on the event's date, sync records the mismatch and leans the draft to `manual_escalation`. Running the agents in sequence would read the right version every time, at the cost of latency on every case.
 - **Retrieval is a date filter, then BM25, in plain code.** The Policy Agent first keeps only the sections in force on the policy date for the complaint's category, which removes superseded policy before anything is ranked. BM25 ranks what is left (a few dozen sections at most), and sections they cite are added one hop out. At this size, embeddings or a vector store would add a dependency without changing what is retrieved; [retrieve.py](../dispute_agent/policy_agent/retrieve.py) is the one place to swap in a LangChain retriever as the policy set grows.
-- **Citations limited by the schema.** Synthesize's output schema accepts only the event and section IDs it was shown, so the wrong-account trap holds by construction, not by prompt. No valid draft means `manual_escalation`.
+- **Citations limited by the schema.** Synthesize's output schema accepts only the event and section IDs it was shown, so the wrong-account trap holds by construction, not by prompt. A rejected draft is redrafted once, with the rejection appended; no valid draft after that means `manual_escalation`. The note's prose gets the same treatment in code: another customer's account ID, event ID or reference is redacted and the redaction recorded.
 - **Human review inside the graph.** The graph pauses before its one write, and a checkpointer saves state, so the rep can approve, override or answer later, even from a new process.
 - **Checks in the eval, not at runtime.** The P1–P7 policy checks are plain Python over event fields: they score every route without an answer key and audited the labels. Opus judges the case notes, so Sonnet isn't grading its own work.
 
 ## Not in v1
 
-- **No runtime agent selection, no retries and no open-ended loops.** The rep's follow-up is the only second pass, and it is bounded to one.
+- **No runtime agent selection, no agent retries and no open-ended loops.** The rep's follow-up is the only second pass through the agents, and it is bounded to one. The only other second call is synthesize's one redraft after a rejected draft.
 - **No third agent.** Classify and synthesize are one LLM call each inside the orchestrator; sync is code.
 - **No authentication or real integrations.** A localhost page ([`app/`](../app/)) streams the graph's steps and hosts the review pause. There is no approval queue or audit log.
 - **No real money, customers or policy.**
