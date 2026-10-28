@@ -164,3 +164,11 @@ customer's details or promises a refund, so the labels never tested `no_leaks_or
 did catch one real leak, S-07's note naming the other customer's account. The next step is a set of
 deliberately broken notes (an invented amount, a mention of E-0135, a promised refund, a right route with a wrong
 reason) graded by the judge to show it drops the right axis. Not built.
+
+## In production
+
+- **Score every live case without an answer key.** `policy_consistent` checks the route against P1–P7 on the agent's own facts, so it can run as an online evaluator on each trace.
+- **Treat the rep's decision as the label.** Approve versus override, and the override reason, give route accuracy over time; overridden cases become new golden scenarios.
+- **Judge a sample of filed notes,** and recalibrate the judge against rep-scored notes each release.
+- **Watch the traces.** No-draft rate, sync issue rate, tool-budget hits, cost and latency per case, from LangSmith.
+- **Measure time saved per case** against a manual baseline; it is a hypothesis, not a claimed result.

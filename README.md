@@ -1,76 +1,42 @@
 # Auto-finance payment dispute agent
 
-A LangGraph agent that investigates a customer's payment dispute and drafts a review case for a human rep. Everything is fictional: the lender, Agarwal Motor Finance, and all of its data.
+A LangGraph agent that investigates a customer's payment dispute and drafts a review case for a human rep. The lender (Agarwal Motor Finance) and all its data are fictional.
 
-## The problem
+**[Screen recording](#)** _(link to add)_
 
-A servicing rep at an auto lender gets complaints like "I was charged a late fee but autopay was on." Today the rep digs through the account history, rereads notes from earlier calls, checks policy and writes up a case by hand.
+## What it does
 
-The agent does the digging. It drafts one review case: the recommended human queue (`adjustment_review`, `explain_events`, `need_more_evidence` or `manual_escalation`), the account events and policy sections behind it, and a case note. The rep approves it, overrides it or answers its questions. The agent never moves money. Full brief: [project_brief.md](docs/project_brief.md).
+A rep gets a complaint like "I was charged a late fee but autopay was on." The agent reads the account history and the policy in force, then drafts a case: which queue it belongs in, the evidence behind that, and a note. The rep approves, overrides or answers its questions. The agent never moves money. Full brief: [project_brief.md](docs/project_brief.md).
 
-## Recording
-
-**[Screen recording](#)** _(link to add)_: a complaint from the inbox, the agent's steps as they stream, the review pause, and the trace in LangSmith.
-
-## The graph
-
-**Start with the [architecture diagram](docs/diagrams/architecture.png).** It explains the whole system on one page: the graph, both agents, their tools and where the human review sits.
+## How it works
 
 [![Architecture diagram](docs/diagrams/architecture.png)](docs/diagrams/architecture.png)
 
-Code decides what runs next; the LLM classifies, runs the two agents and drafts. Every run takes the solid path; the dashed edge runs only when the rep answers an open question, at most once. Built in [graph.py](dispute_agent/orchestrator/graph.py).
+An orchestrator runs two agents in parallel (Account and Policy), joins their findings, drafts the case and pauses for the rep. Details: [architecture.md](docs/architecture.md).
 
-```mermaid
-flowchart TD
-    START([rep message + account_id]) --> classify["classify<br/><i>LLM</i>"]
-    classify --> account_agent["account_agent<br/><i>LLM + 5 read-only tools, ≤6 calls</i>"]
-    classify --> policy_agent["policy_agent<br/><i>code retrieval + LLM interpretation, on the complaint date</i>"]
-    account_agent --> derive_states["derive_states<br/><i>code: payment/refund state, policy_date, fact flags</i>"]
-    derive_states --> sync["sync<br/><i>code join + cross-check; records gaps, never retries</i>"]
-    policy_agent --> sync
-    sync --> synthesize["synthesize<br/><i>LLM; only the IDs shown; no draft → manual_escalation</i>"]
-    synthesize --> review{{"review<br/><i>pause: the rep approves, overrides or answers</i>"}}
-    review -->|approve or override| create_review_case["create_review_case<br/><i>code, simulated write</i>"]
-    review -.->|rep answered, once| account_agent_followup["account_agent_followup → derive_states_followup"]
-    account_agent_followup -.-> sync
-    create_review_case --> END([case filed under the recommended or the rep's route])
-```
+## Results
 
-## Evaluation results
+**13 of 16 test complaints pass every check.** S-11 picks the wrong queue; held-out S-04 and S-12 each miss one policy section.
 
-**All 16 scenarios:** the right queue on 15 (S-11 misses). The disputed event, the required evidence, no other-account evidence and the P1–P7 policy checks hold on all 16. The required policy sections are cited on 14; held-out S-04 and S-12 each miss one.
+**[See all 16, with a LangSmith trace for each →](docs/results.md)**
 
-**[See the results](docs/results.md)**: one row per scenario, a 🟢/🟡/🔴 dot for each check, and a link to each scenario's trace in LangSmith (public, no login): the complaint, both agents' tool and model calls, and the draft. The whole run is also one [LangSmith experiment](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737), with the judge's reason on hover for each score.
+## Key design choices
 
-The same run is also available locally as a workbook ([`release_2026-10-27_v0.8.xlsx`](dispute_agent/evaluation/reports/release_2026-10-27_v0.8.xlsx)), which adds slices by tag. How each metric is scored is in the [evaluation README](dispute_agent/evaluation/README.md).
+- **Code decides what runs next; the LLM handles language.** Rules that must always hold never depend on a model.
+- **Two agents in parallel, no retries.** A mismatch is recorded and pushes the case to a cautious queue, so a run can't loop.
+- **The draft can only cite what it was shown.** The output schema rejects any other event or policy ID, so wrong-account evidence can't get in.
+- **The human review is inside the graph.** It pauses before its one write and can be resumed later.
 
-## Design notes
+Reasoning for each, plus retrieval and policy dates: [architecture.md § Design decisions](docs/architecture.md#design-decisions).
 
-- **Code runs the workflow; the LLM handles language.** The LLM reads messy complaints, rep notes and policy prose. Code picks the next step, derives payment state and checks dates, so rules that must always hold don't depend on a model.
-- **A fixed graph, not an LLM supervisor.** Every run takes the same path, so traces compare cleanly. A supervisor is worth adding only if evals show the fixed graph is what fails.
-- **Two agents in parallel, no retries.** The Account and Policy Agents don't need each other to start. Sync records whatever doesn't line up and leans the draft to a cautious route; nothing is sent back, so the run can't loop.
-- **The cost of running in parallel: the policy date.** Policy is effective-dated, and the version that applies is the one in force on the disputed event's date, which only the Account Agent finds. The Policy Agent can't wait for it, so it reads on the complaint date. If a different version was in force on the event's date, sync records the mismatch and leans the draft to `manual_escalation`. Running the agents in sequence would read the right version every time, at the cost of latency on every case.
-- **Retrieval is a date filter, then BM25, in plain code.** The Policy Agent first keeps only the sections in force on the policy date for the complaint's category, which removes superseded policy before anything is ranked. BM25 ranks what is left (a few dozen sections at most), and sections they cite are added one hop out. At this size, embeddings or a vector store would add a dependency without changing what is retrieved; [retrieve.py](dispute_agent/policy_agent/retrieve.py) is the one place to swap in a LangChain retriever as the policy set grows.
-- **Citations limited by the schema.** Synthesize's output schema accepts only the event and section IDs it was shown, so the wrong-account trap holds by construction, not by prompt. No valid draft means `manual_escalation`.
-- **Human review inside the graph.** The graph pauses before its one write, and a checkpointer saves state, so the rep can approve, override or answer later, even from a new process.
-- **Checks in the eval, not at runtime.** The P1–P7 policy checks are plain Python over event fields: they score every route without an answer key and audited the labels. Opus judges the case notes, so Sonnet isn't grading its own work.
+## Known gaps
 
-## Known failures and what I'd improve
+- **S-11 picks the wrong queue.** It says `explain_events` where only a bank letter can settle it (`need_more_evidence`).
+- **S-07's note can mention another customer's account.** The schema blocks the wrong IDs, but not account details written in the prose; only the judge caught it.
+- **The judge is untested on bad notes.** Next: grade deliberately broken notes and check the score drops.
+- **No code-only baseline, and small sets.** Four held-out scenarios are a sanity check, not a measurement.
 
-- **S-07's note can be empty or can leak.** The draft sometimes cites Andrea Bellow's payment; the schema rejects it, so the route falls back to `manual_escalation` with no case note (3 of 8 runs since the last prompt fix). In the latest release the draft cited only the right events, but the note's text still named her account and payment reference; the code checks read cited IDs, not prose, so only the judge caught it (`no_leaks_or_promises`). The route is right either way. Next: one bounded synthesize retry that passes back the rejection reason, and a code check for other-account IDs in the note text.
-- **S-11 picks the wrong queue.** The customer blames his bank for a returned payment; only a bank letter can settle it, so the key says `need_more_evidence`. The agent says `explain_events` in 18 of 20 runs, even though its note asks for a bank letter. Not yet fixed.
-- **Two held-out scenarios miss a policy section.** S-04 and S-12 get the route right but miss a required policy section. Seen on both held-out passes; nothing was tuned on them.
-- **The judge is calibrated only at the ceiling.** Ten of twelve hand-scored notes were near-perfect, so agreement shows the judge doesn't invent failures. It has since caught one real leak (S-07), but it hasn't been tested on deliberately broken notes. Next: grade deliberately broken notes (an invented amount, a mention of the other customer, a promised refund) and check it drops the right axis.
-- **No baseline.** A code-only version on the same scenarios would show what the LLM steps add.
-- **Small sets.** Four held-out scenarios are a sanity check, not a measurement, and slices of six or fewer are directional only.
-
-### In production
-
-- **Score every live case without an answer key.** `policy_consistent` checks the route against P1–P7 on the agent's own facts, so it can run as an online evaluator on each trace.
-- **Treat the rep's decision as the label.** Approve versus override, and the override reason, give route accuracy over time; overridden cases become new golden scenarios.
-- **Judge a sample of filed notes,** and recalibrate the judge against rep-scored notes each release.
-- **Watch the traces.** No-draft rate, sync issue rate, tool-budget hits, cost and latency per case, from LangSmith.
-- **Measure time saved per case** against a manual baseline; it is a hypothesis, not a claimed result.
+How I'd run this in production: [evaluation README § In production](dispute_agent/evaluation/README.md#in-production).
 
 ## Quickstart
 
