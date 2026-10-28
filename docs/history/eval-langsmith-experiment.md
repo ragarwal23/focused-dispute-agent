@@ -4,7 +4,8 @@
 
 v1.0, 2026-10-27. Supersedes the `langsmith-sync` replay story in `dispute_agent/evaluation/README.md` ("LangSmith:
 dataset ... and the experiment `release-20261027T174341Z-90f5290d`"). Builds on eval phases 1 and 2
-(`docs/history/eval-framework-phase{1,2}.md`). Not implemented yet.
+(`docs/history/eval-framework-phase{1,2}.md`). Implemented in 9c0a62b; the release experiment is
+`release-20261027T223317Z-fbbae905`.
 
 Interview decisions (Rachit, 2026-10-27), all closed, see §5:
 live experiment through `langsmith.evaluate` with the real graph as target; all 16 scenarios (a second, untuned pass

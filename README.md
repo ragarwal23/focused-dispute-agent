@@ -38,6 +38,8 @@ flowchart TD
 
 ## Evaluation results
 
+**All 16 scenarios:** the right queue on 15 (S-11 misses). The disputed event, the required evidence, no other-account evidence and the P1–P7 policy checks hold on all 16. The required policy sections are cited on 14; held-out S-04 and S-12 each miss one.
+
 **[See the results in LangSmith](https://smith.langchain.com/public/49bdd689-1b76-49fd-8d2d-2cc19bd1f452/d/compare?selectedSessions=fe12ec99-02aa-4357-92ea-16a793c49737)** (public, no login): the release experiment on the `dispute-agent-golden` dataset. One row per scenario (all 16), the six code-graded axes and the four judge scores as columns. Judge scores show as a fraction of 3 (0.67 is 2 of 3); hover one for the judge's reason. Click a row to open its trace: the complaint, both agents' tool and model calls, and the draft.
 
 The same run is also available locally as a workbook ([`release_2026-10-27_v0.8.xlsx`](dispute_agent/evaluation/reports/release_2026-10-27_v0.8.xlsx)), which adds slices by tag. How each metric is scored is in the [evaluation README](dispute_agent/evaluation/README.md).
@@ -47,6 +49,8 @@ The same run is also available locally as a workbook ([`release_2026-10-27_v0.8.
 - **Code runs the workflow; the LLM handles language.** The LLM reads messy complaints, rep notes and policy prose. Code picks the next step, derives payment state and checks dates, so rules that must always hold don't depend on a model.
 - **A fixed graph, not an LLM supervisor.** Every run takes the same path, so traces compare cleanly. A supervisor is worth adding only if evals show the fixed graph is what fails.
 - **Two agents in parallel, no retries.** The Account and Policy Agents don't need each other to start. Sync records whatever doesn't line up and leans the draft to a cautious route; nothing is sent back, so the run can't loop.
+- **The cost of running in parallel: the policy date.** Policy is effective-dated, and the version that applies is the one in force on the disputed event's date, which only the Account Agent finds. The Policy Agent can't wait for it, so it reads on the complaint date. If a different version was in force on the event's date, sync records the mismatch and leans the draft to `manual_escalation`. Running the agents in sequence would read the right version every time, at the cost of latency on every case.
+- **Retrieval is a date filter, then BM25, in plain code.** The Policy Agent first keeps only the sections in force on the policy date for the complaint's category, which removes superseded policy before anything is ranked. BM25 ranks what is left (a few dozen sections at most), and sections they cite are added one hop out. At this size, embeddings or a vector store would add a dependency without changing what is retrieved; [retrieve.py](dispute_agent/policy_agent/retrieve.py) is the one place to swap in a LangChain retriever as the policy set grows.
 - **Citations limited by the schema.** Synthesize's output schema accepts only the event and section IDs it was shown, so the wrong-account trap holds by construction, not by prompt. No valid draft means `manual_escalation`.
 - **Human review inside the graph.** The graph pauses before its one write, and a checkpointer saves state, so the rep can approve, override or answer later, even from a new process.
 - **Checks in the eval, not at runtime.** The P1–P7 policy checks are plain Python over event fields: they score every route without an answer key and audited the labels. Opus judges the case notes, so Sonnet isn't grading its own work.

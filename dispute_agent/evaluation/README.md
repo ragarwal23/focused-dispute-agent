@@ -26,7 +26,7 @@ PASS and shows 0-3.
 | [`experiment.py`](experiment.py) | The LangSmith side: the golden dataset (created once, never deleted, since deleting it deletes its experiments), `eval --experiment`, `judge --experiment`, and `langsmith-sync` to replay an older JSON |
 | [`validate.py`](validate.py) | `stability` over repeated evals and LangSmith `trace` shapes |
 | [`labels.xlsx`](labels.xlsx) | The 12 dev case notes of the 2026-10-27 release with four empty 0-3 columns for Rachit to score (see Calibration) |
-| [`reports/`](reports/) | One committed workbook per release; [`release_2026-10-27_v0.8.xlsx`](reports/release_2026-10-27_v0.8.xlsx) is the local copy of the linked experiment |
+| [`reports/`](reports/) | One committed workbook per release. **[`release_2026-10-27_v0.8.xlsx`](reports/release_2026-10-27_v0.8.xlsx) is the current one**, the local copy of the linked experiment. The other two are earlier graphs, kept for the history docs: `release_2026-10-27.xlsx` (with the gate) and `release_2026-10-27_no-gate.xlsx` (gate removed, sync retries still in) |
 
 ## The golden workbook
 
