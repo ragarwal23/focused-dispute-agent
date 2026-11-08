@@ -163,7 +163,7 @@ def test_matrix_and_slices(workbook):
     assert ws["E2"].fill.fgColor.rgb.endswith("C6EFCE") and ws["K3"].fill.fgColor.rgb.endswith("FFC7CE")
     rows = [r for r in ws.iter_rows(values_only=True) if r[0]]
     assert rows[-1][0] == "manual_escalation" and rows[-5][0] == "expected \\ final route"
-    s = {}
+    s, key = {}, None
     for r in workbook["Slices"].iter_rows(values_only=True):
         if r[0] in ("wording", "note_driven", "trap", "category", "route"):
             key = r[0]
@@ -181,7 +181,7 @@ def test_compare_intersection(ds, tmp_path, json_path):
     out = tmp_path / "release.xlsx"
     assert render(str(json_path), str(out), before=str(before_path)) == 0
     wb = openpyxl.load_workbook(out)
-    assert "Compare" in wb.sheetnames and dict(wb["Run"].iter_rows(values_only=True))["before_path"] == str(before_path)
+    assert "Compare" in wb.sheetnames and {k: v for k, v in wb["Run"].iter_rows(values_only=True)}["before_path"] == str(before_path)
     rows = [trim(r) for r in wb["Compare"].iter_rows(values_only=True) if r[0]]
     head = {r[0]: r[1] for r in rows[:4]}
     assert head["scenarios compared"] == 1 and head["excluded (in one run only)"] == "S-02, S-07, S-09"
@@ -203,7 +203,7 @@ def test_judge_panel_and_err(ds, tmp_path, json_path):
     m = matrix(wb)
     assert m["S-01"]["no_leaks_or_promises"] == 1 and m["S-01"]["Judge mean"] == 2.25 and m["S-07"]["no_leaks_or_promises"] == "ERR" and m["S-07"]["Judge mean"] is None
     assert m["total"]["no_leaks_or_promises"] == 1.0 and m["total"]["Judge mean"] == 2.25
-    assert "Calibration" not in wb.sheetnames and dict(wb["Run"].iter_rows(values_only=True))["judge_path"] == "claude-opus-5-5 via judge sidecar"
+    assert "Calibration" not in wb.sheetnames and {k: v for k, v in wb["Run"].iter_rows(values_only=True)}["judge_path"] == "claude-opus-5-5 via judge sidecar"
 
 
 def test_sidecar_mismatch_exit_2(tmp_path, json_path, capsys):
@@ -231,7 +231,7 @@ def test_calibration_sheet(ds, tmp_path, json_path, capsys):
     assert list(openpyxl.load_workbook(out)["Calibration"].iter_rows(values_only=True)) == [("no labels yet",)]
     ws = wb["Labels"]
     for col in range(9, 13):
-        ws.cell(row=2, column=col).value = 3
+        ws.cell(row=2, column=col).value = 3  # pyright: ignore[reportAttributeAccessIssue]
     wb.save(labels_path)
     assert render(str(json_path), str(out), judge=str(judge_path), labels=str(labels_path)) == 0
     cal = [trim(r) for r in openpyxl.load_workbook(out)["Calibration"].iter_rows(values_only=True) if r[0]]

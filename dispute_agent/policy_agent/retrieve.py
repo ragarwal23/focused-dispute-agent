@@ -12,7 +12,7 @@ import re
 from collections import Counter
 from datetime import date, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -43,14 +43,14 @@ class RetrievedSection(BaseModel):
     via: str | None = None  # set when the section was added because another retrieved section cites it
 
 
-def _front_matter(text: str, path: Path) -> tuple[dict[str, object], str]:
+def _front_matter(text: str, path: Path) -> tuple[dict[str, Any], str]:
     """Split a policy file into its `---` front matter (as a dict) and the body."""
     if not text.startswith("---\n"):
         raise ValueError(f"{path}: missing front matter")
     end = text.find("\n---", 4)
     if end < 0:
         raise ValueError(f"{path}: unclosed front matter")
-    meta: dict[str, object] = {}
+    meta: dict[str, Any] = {}
     for line in text[4:end].splitlines():
         key, sep, value = line.partition(":")
         if not sep:

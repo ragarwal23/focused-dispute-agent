@@ -55,7 +55,7 @@ def test_check_detects_drift(ds, tmp_path):
     ws = wb["S-01"]
     for row in ws.iter_rows(min_row=2):
         if row[0].value == "expected_route":
-            row[1].value = "manual_escalation"
+            row[1].value = "manual_escalation"  # pyright: ignore[reportAttributeAccessIssue]
     wb.save(path)
     diffs = check(ds, path)
     assert len(diffs) == 1 and diffs[0].startswith("S-01.expected_route: workbook 'manual_escalation'")

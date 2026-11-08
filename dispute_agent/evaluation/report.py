@@ -10,12 +10,14 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from langsmith import Client
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from dispute_agent.evaluation.evaluate import confusion_lines
@@ -86,7 +88,8 @@ def fill(c, verdict: Any) -> None:
 def cited_by_account_agent(row: dict[str, Any]) -> set[str]:
     """Every event ID the Account Agent's findings mention: relevant, candidate and disputed, the set score() checks."""
     f = row.get("findings") or {}
-    return set(f.get("relevant_event_ids") or []) | set(f.get("candidate_event_ids") or []) | ({f.get("disputed_event_id")} - {None})
+    disputed = f.get("disputed_event_id")
+    return set(f.get("relevant_event_ids") or []) | set(f.get("candidate_event_ids") or []) | ({disputed} if disputed is not None else set())
 
 
 def actual_fields(case: Case, row: dict[str, Any]) -> dict[str, Any]:
@@ -201,7 +204,7 @@ def matrix_row(case: Case, row: dict[str, Any] | None, judge: dict[str, Any] | N
     if row is None:
         return base + [None] * len(AXES) + ["PENDING", None] + [None] * (len(JUDGE_AXES) + 2)
     verdicts = row_verdicts(row)
-    scores = judge_scores(judge["rows"].get(case.scenario_id)) if judge else {a: None for a in JUDGE_AXES}
+    scores: dict[str, int | None] = judge_scores(judge["rows"].get(case.scenario_id)) if judge else {a: None for a in JUDGE_AXES}
     judge_cells = [("ERR" if judge and s is None else s) for s in scores.values()]
     cons = "—" if "exception" in row else consistent(row)
     return base + [verdicts[a] for a in AXES] + [grade(verdicts), score_str(verdicts)] + judge_cells + [
@@ -285,6 +288,7 @@ def build_labels(data: dict[str, Any], cases: list[Case], out: Path) -> int:
     rows = {r["scenario_id"]: r for r in data["rows"]}
     wb = Workbook()
     ws = wb.active
+    assert ws is not None  # a new Workbook always has one sheet
     ws.title = "Labels"
     _append_header(ws, LABEL_COLS)
     n = 0
@@ -299,7 +303,7 @@ def build_labels(data: dict[str, Any], cases: list[Case], out: Path) -> int:
     dv = DataValidation(type="list", formula1='"0,1,2,3"', allow_blank=True)
     ws.add_data_validation(dv)
     first, last = LABEL_COLS.index(JUDGE_AXES[0]) + 1, LABEL_COLS.index(JUDGE_AXES[-1]) + 1
-    dv.add(f"{ws.cell(row=2, column=first).column_letter}2:{ws.cell(row=n + 1, column=last).column_letter}{n + 1}")
+    dv.add(f"{get_column_letter(first)}2:{get_column_letter(last)}{n + 1}")
     for col, width in zip("ABCDEFGH", (12, 14, 50, 20, 60, 20, 60, 40)):
         ws.column_dimensions[col].width = width
     ws.freeze_panes = "B2"
@@ -319,6 +323,7 @@ def write_report(
     rows = {r["scenario_id"]: r for r in data["rows"]}
     wb = Workbook()
     run = wb.active
+    assert run is not None  # a new Workbook always has one sheet
     run.title = "Run"
     values = {
         "json_path": str(json_path), "captured_at": captured_at(json_path), "model_id": data.get("model_id", ""),
@@ -372,13 +377,15 @@ def write_markdown(data: dict[str, Any], json_path: Path, cases: list[Case], out
     ]
     for case in cases:
         row = rows.get(case.scenario_id)
-        verdicts = row_verdicts(row) if row else {a: "PENDING" for a in AXES}
+        graded = row_verdicts(row) if row else None
+        verdicts: Mapping[str, str] = graded if graded is not None else {a: "PENDING" for a in AXES}
+        overall = grade(graded) if graded is not None else None
         mean = judge_mean(judge_scores(judge["rows"].get(case.scenario_id))) if judge and row else None
         trace = (links[1] if links else {}).get(case.scenario_id)
         lines.append("| " + " | ".join([
             case.scenario_id + (" *(held out)*" if case.split == "heldout" else ""), plain(case.expected_category),
             "—" if case.trap == "none" else plain(case.trap), *(DOTS[verdicts[a]] for a in AXES),
-            f"{DOTS[grade(verdicts) if row else 'PENDING']} {grade(verdicts) if row else 'not run'}",
+            f"{DOTS[overall or 'PENDING']} {overall or 'not run'}",
             "—" if mean is None else f"{mean:.2f} / 3", f"[trace]({trace})" if trace else "",
         ]) + " |")
     lines += ["", f"Generated from `{json_path.as_posix()}` by `python -m dispute_agent report --out {out.as_posix()}`."

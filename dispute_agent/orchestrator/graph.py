@@ -1,3 +1,4 @@
+# pyright: reportTypedDictNotRequiredAccess=false
 """The orchestrator graph: which node runs after which. Start reading the code here.
 
     classify ─┬> account_agent -> derive_states ─┐
@@ -49,26 +50,26 @@ SERDE = JsonPlusSerializer(allowed_msgpack_modules=(
 ))
 
 class GraphState(TypedDict, total=False):
-    """The one object that travels through the graph. Each node adds its own fields."""
+    """The one object that travels through the graph. Each node adds its own fields; a field is absent until then."""
 
     rep_message: str
     account_id: str
     category: Category
-    account: dict[str, Any] | None  # the Account Agent's final state: findings, messages, tool_calls_made, budget_hit, tool_errors
-    derived: DerivedFacts | None
-    policy: PolicyFindings | None
-    sync: SyncResult | None
-    synthesis: SynthesisResult | None
-    case: CaseResult | None
+    account: dict[str, Any]  # the Account Agent's final state: findings, messages, tool_calls_made, budget_hit, tool_errors
+    derived: DerivedFacts
+    policy: PolicyFindings
+    sync: SyncResult
+    synthesis: SynthesisResult
+    case: CaseResult
     thread_label: str  # what `review` shows the rep: the account or scenario ID
-    review: ReviewDecision | None  # the rep's last decision
+    review: ReviewDecision  # the rep's last decision
     followups: int  # rep answers used, at most MAX_FOLLOWUPS
     rep_answer: str | None  # the rep's raw answer; rep_message carries it too
 
 
-def after_review(s: GraphState) -> Literal["account_agent_followup", "create_review_case"]:
+def after_review(state: GraphState) -> Literal["account_agent_followup", "create_review_case"]:
     """The graph's one decision: the rep answered, so look again once; otherwise file the case."""
-    return "account_agent_followup" if s["review"].action == "answer" else "create_review_case"
+    return "account_agent_followup" if state["review"].action == "answer" else "create_review_case"
 
 
 def build_graph(
@@ -95,47 +96,53 @@ def build_graph(
                 ids.add(case.case_id)
         return ids
 
-    def classify_node(s: GraphState) -> dict[str, Any]:
-        return {"category": classify(s["rep_message"], classify_model)}
+    def classify_node(state: GraphState) -> dict[str, Any]:
+        return {"category": classify(state["rep_message"], classify_model)}
 
-    def account_node(s: GraphState) -> dict[str, Any]:
-        return {"account": account_agent.invoke(initial_state(s["account_id"], s["category"], s["rep_message"]))}
-
-    def derive_node(s: GraphState) -> dict[str, Any]:
-        return {"derived": derive_states(s["account"]["findings"], s["category"], s["account_id"], ds)}
-
-    def policy_node(s: GraphState) -> dict[str, Any]:
-        """Runs in parallel with the Account Agent, so it reads on the complaint date, with no facts."""
-        return {"policy": run_policy_agent(sections, s["category"], s["rep_message"], WORLD_TODAY, model=policy_model)}
-
-    def sync_node(s: GraphState) -> dict[str, Any]:
-        return {"sync": sync(s["account"], s["policy"], s["derived"], s["category"], sections)}
-
-    def synthesize_node(s: GraphState) -> dict[str, Any]:
-        return {"synthesis": run_synthesize(
-            s["category"], s["rep_message"], s["account"], s["derived"], s["policy"], s["sync"], model=synthesize_model,
-            account_id=s["account_id"],
+    def account_node(state: GraphState) -> dict[str, Any]:
+        return {"account": account_agent.invoke(
+            initial_state(state["account_id"], state["category"], state["rep_message"]),
         )}
 
-    def review_node(s: GraphState) -> dict[str, Any]:
+    def derive_node(state: GraphState) -> dict[str, Any]:
+        return {"derived": derive_states(state["account"]["findings"], state["category"], state["account_id"], ds)}
+
+    def policy_node(state: GraphState) -> dict[str, Any]:
+        """Runs in parallel with the Account Agent, so it reads on the complaint date, with no facts."""
+        return {"policy": run_policy_agent(
+            sections, state["category"], state["rep_message"], WORLD_TODAY, model=policy_model,
+        )}
+
+    def sync_node(state: GraphState) -> dict[str, Any]:
+        return {"sync": sync(state["account"], state["policy"], state["derived"], state["category"], sections)}
+
+    def synthesize_node(state: GraphState) -> dict[str, Any]:
+        return {"synthesis": run_synthesize(
+            state["category"], state["rep_message"], state["account"], state["derived"], state["policy"], state["sync"],
+            model=synthesize_model, account_id=state["account_id"],
+        )}
+
+    def review_node(state: GraphState) -> dict[str, Any]:
         """Pause for the rep. Re-runs from the top on resume, so nothing before interrupt() but reading state."""
-        existing = find_duplicate(ds, s["account_id"], s["category"], s["derived"].disputed_event_id)
-        request = build_request(s, s["thread_label"], MAX_FOLLOWUPS, existing)
+        existing = find_duplicate(ds, state["account_id"], state["category"], state["derived"].disputed_event_id)
+        request = build_request(state, state["thread_label"], MAX_FOLLOWUPS, existing)
         decision = ReviewDecision.model_validate(interrupt(request.model_dump(mode="json")))
         while decision.action == "answer" and not request.can_answer:  # refused: pause again (raising would replay it)
             decision = ReviewDecision.model_validate(interrupt(request.model_dump(mode="json")))
         return {"review": decision}
 
-    def account_followup_node(s: GraphState) -> dict[str, Any]:
+    def account_followup_node(state: GraphState) -> dict[str, Any]:
         """The rep answered: the Account Agent looks again with the answer folded into the complaint."""
-        message = with_answer(s["rep_message"], s["review"].answer)
-        out = account_node({**s, "rep_message": message})
-        return {**out, "rep_message": message, "rep_answer": s["review"].answer, "followups": s["followups"] + 1}
+        answer = state["review"].answer
+        assert answer is not None  # after_review sends only action="answer" here, and ReviewDecision requires its text
+        message = with_answer(state["rep_message"], answer)
+        out = account_node({**state, "rep_message": message})
+        return {**out, "rep_message": message, "rep_answer": answer, "followups": state["followups"] + 1}
 
-    def case_node(s: GraphState) -> dict[str, Any]:
-        route = s["review"].route if s["review"].action == "override" else s["synthesis"].route
+    def case_node(state: GraphState) -> dict[str, Any]:
+        route = state["review"].route or state["synthesis"].route  # ReviewDecision sets a route on overrides only
         with minting:
-            case = create_review_case(ds, s["account_id"], s["category"], s["derived"], route, filed())
+            case = create_review_case(ds, state["account_id"], state["category"], state["derived"], route, filed())
             if case.created:
                 minted.add(case.case_id)
         return {"case": case}
@@ -175,5 +182,5 @@ def sqlite_checkpointer(path: Path) -> SqliteSaver:
 def initial_graph_state(account_id: str, rep_message: str, label: str = "") -> GraphState:
     return {
         "rep_message": rep_message, "account_id": account_id,
-        "thread_label": label or account_id, "review": None, "followups": 0, "rep_answer": None,
+        "thread_label": label or account_id, "followups": 0, "rep_answer": None,
     }

@@ -101,9 +101,9 @@ def _print_tool_calls(account: dict[str, Any], quiet: bool) -> None:
         for call in m.tool_calls:
             args = ", ".join(f"{k}={v}" for k, v in call["args"].items())
             print(f"-> {call['name']}({args})")
-            r = results.get(call["id"])
+            r = results.get(call["id"] or "")
             if r is not None and not quiet:
-                text = r.content.replace("\n", " ")
+                text = str(r.content).replace("\n", " ")
                 print(f"   {text[:300]}{'...' if len(text) > 300 else ''}")
 
 

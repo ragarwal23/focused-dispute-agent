@@ -33,7 +33,9 @@ def test_chain_of(ds):
 def test_misspelled_header_raises(tmp_path):
     columns = ["account_id", "customer_name", "vehicle", "monthly_payment", "due_day", "bank_last4", "memo"]
     wb = openpyxl.Workbook()
-    wb.active.append(["customer_nam" if c == "customer_name" else c for c in columns])
+    ws = wb.active
+    assert ws is not None
+    ws.append(["customer_nam" if c == "customer_name" else c for c in columns])
     wb.save(tmp_path / "accounts.xlsx")
     with pytest.raises(ValueError, match="customer_nam"):
         _read_rows(tmp_path / "accounts.xlsx", set(columns))

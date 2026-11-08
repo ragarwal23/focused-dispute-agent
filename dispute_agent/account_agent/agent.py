@@ -9,7 +9,8 @@ The agent only reads records and proposes the disputed event. derive.py checks i
 from __future__ import annotations
 
 import json
-from typing import Annotated, Any, Literal, TypedDict
+from collections.abc import Mapping
+from typing import Annotated, Any, Literal, TypedDict, cast
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
@@ -129,7 +130,7 @@ def render_transcript(state: AccountAgentState) -> str:
     return "\n\n".join(parts)
 
 
-def _result(call: dict[str, Any], content: str, status: str = "success") -> ToolMessage:
+def _result(call: Mapping[str, Any], content: str, status: str = "success") -> ToolMessage:
     return ToolMessage(content=content, tool_call_id=call["id"], name=call["name"], status=status)
 
 
@@ -148,7 +149,7 @@ def build_account_agent(ds: Dataset, model: Any = None, finalize: Any = None):
         return {"messages": [*seed, ai], "tool_errors": errors}
 
     def tool_node(state: AccountAgentState) -> dict[str, Any]:
-        last = state["messages"][-1]
+        last = cast(AIMessage, state["messages"][-1])  # llm_call always adds the last message
         made, hit, errors, out = state["tool_calls_made"], state["budget_hit"], list(state["tool_errors"]), []
         for call in last.tool_calls:  # in the order the model issued them
             if made >= TOOL_BUDGET:
@@ -178,7 +179,7 @@ def build_account_agent(ds: Dataset, model: Any = None, finalize: Any = None):
         return {"findings": findings, "tool_errors": errors}
 
     def after_llm(state: AccountAgentState) -> Literal["tool_node", "finalize"]:
-        last = state["messages"][-1]
+        last = cast(AIMessage, state["messages"][-1])  # llm_call always adds the last message
         truncated = (last.response_metadata or {}).get("stop_reason") == "max_tokens"
         return "tool_node" if last.tool_calls and not truncated else "finalize"
 

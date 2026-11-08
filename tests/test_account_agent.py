@@ -1,8 +1,12 @@
 """The Account Agent's loop, driven by scripted fake models: budget cap, tool errors, truncation."""
 
+from typing import cast
+
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from dispute_agent.account_agent.agent import AccountFindings, build_account_agent, initial_state, render_transcript
+from dispute_agent.account_agent.agent import (
+    AccountAgentState, AccountFindings, build_account_agent, initial_state, render_transcript,
+)
 
 
 class ScriptedModel:
@@ -53,7 +57,7 @@ def test_loop_tool_error_recorded(ds):
     assert out["tool_errors"] == ["KeyError: 'explode'"] and out["tool_calls_made"] == 2 and out["budget_hit"] is False
     err = [m for m in out["messages"] if isinstance(m, ToolMessage)][0]
     assert err.status == "error" and err.tool_call_id == "c0"
-    assert "[agent]\ndone, the fee is E-0150" in render_transcript(out)
+    assert "[agent]\ndone, the fee is E-0150" in render_transcript(cast(AccountAgentState, out))
 
 
 def test_loop_truncated_turn_goes_to_finalize(ds):

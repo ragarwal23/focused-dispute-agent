@@ -2,11 +2,12 @@
 
 import json
 import socket
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from app.server import free_port, make_app
+from app.server import free_port, langsmith_url, make_app
 from test_derive import oracle_findings
 from test_graph import FakeAccountAgent
 from test_review import graph_for
@@ -139,6 +140,16 @@ def test_trace_404_without_run(make, ds):
     client = make(trace_url=not_ingested)
     tid = post(client, ds).headers["x-thread-id"]
     assert client.get(f"/api/threads/{tid}/trace").status_code == 404
+
+
+def test_langsmith_url_raises_when_trace_has_no_url(monkeypatch):
+    class NoUrlClient:
+        def read_run(self, run_id):
+            return SimpleNamespace(url=None)
+
+    monkeypatch.setattr("langsmith.Client", NoUrlClient)
+    with pytest.raises(LookupError):
+        langsmith_url("run-1")
 
 
 def test_serves_page_from_static_dir(make, tmp_path):

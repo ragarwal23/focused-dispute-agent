@@ -1,0 +1,7 @@
+{
+  "include": ["dispute_agent", "app", "tests"],
+  "exclude": ["**/node_modules", "app/dist", "**/__pycache__"],
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "standard"
+}

@@ -53,7 +53,10 @@ def langsmith_url(run_id: str) -> str:
     """Asked only when the rep clicks "View trace": LangSmith ingests late, and the run path never waits on it."""
     from langsmith import Client
 
-    return Client().read_run(run_id).url
+    url = Client().read_run(run_id).url
+    if not url:
+        raise LookupError(f"no URL yet for run {run_id}")
+    return url
 
 
 def _sse(event: dict[str, Any]) -> str:

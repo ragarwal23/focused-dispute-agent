@@ -1,6 +1,7 @@
 """The orchestrator graph: the fan-out and join, and sync recording what does not line up without sending an agent back."""
 
 from datetime import datetime
+from typing import Any
 
 from dispute_agent.sync.synthesize import Draft
 from langgraph.checkpoint.memory import InMemorySaver
@@ -40,7 +41,7 @@ class FakeAccountAgent:
         return self.results[min(self.calls, len(self.results)) - 1]
 
 
-def run(ds, sections, agent, sid="S-02", decisions=(), checkpointer=None, synthesize_model=None):
+def run(ds, sections, agent, sid="S-02", decisions=(), checkpointer=None, synthesize_model=None) -> tuple[list[str], dict[str, Any], Any, Any, Any]:
     """Stream the graph with fakes for the three single-call models, answering each pause with the next decision
     (then approve); return the node order (the parallel pair in NORMAL's order), the final state, the fakes and the graph."""
     s = ds.scenarios[sid]
@@ -49,7 +50,8 @@ def run(ds, sections, agent, sid="S-02", decisions=(), checkpointer=None, synthe
     draft = Draft(review_route=s.expected_route, event_ids=s.expected_required_event_ids, policy_source_ids=s.expected_policy_ids,
                   confidence="medium", open_questions=["x"], case_note="x")
     graph = build_graph(ds, sections, agent, classify_model, policy_model, synthesize_model or FakeModel(draft), checkpointer)
-    order, final, decisions = [], None, list(decisions)
+    order, decisions = [], list(decisions)
+    final: dict[str, Any] = {}
     step = initial_graph_state(s.account_id, s.rep_message, sid)
     while step is not None:
         paused = False

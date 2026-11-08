@@ -44,7 +44,10 @@ def derived_json(derived: DerivedFacts) -> dict[str, Any]:
 
 def _chain_state(ds: Dataset, event_id: str) -> PaymentState:
     types = {e.type for e in ds.chain_of(event_id)}
-    for t, state in (("payment_returned", "returned"), ("payment_reversed", "reversed"), ("payment_posted", "posted")):
+    outcomes: tuple[tuple[str, PaymentState], ...] = (
+        ("payment_returned", "returned"), ("payment_reversed", "reversed"), ("payment_posted", "posted"),
+    )
+    for t, state in outcomes:
         if t in types:
             return state
     return "pending"

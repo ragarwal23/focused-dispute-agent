@@ -1,4 +1,4 @@
-.PHONY: setup run build test
+.PHONY: setup run build test typecheck
 
 setup:
 	python3 -m venv .venv
@@ -13,3 +13,6 @@ build:
 
 test:
 	.venv/bin/python -m pytest -q
+
+typecheck:
+	pyright

@@ -190,6 +190,7 @@ def test_run_redacts_other_account_from_note_and_questions(ds, sections):
                             account_id="A-1007")
     assert result.errors == [] and result.route == "manual_escalation"
     assert result.redactions == ["E-0135", "A-1008", "PHN-0048213"]
+    assert result.draft is not None
     for text in [result.draft.case_note, *result.draft.open_questions]:
         assert "A-1008" not in text and "E-0135" not in text and "PHN-0048213" not in text
     assert "E-0157" in result.draft.case_note and "A-1007" in result.draft.case_note
@@ -203,6 +204,7 @@ def test_run_keeps_reference_the_customer_gave(ds, sections):
     draft = _draft(event_ids=["E-0157"], policy_source_ids=s.expected_policy_ids)
     draft = draft.model_copy(update={"case_note": "Customer cites PHN-0048213; nothing on this account matches."})
     result = run_synthesize(s.expected_category, message, account, derived, policy, synced, FakeModel(draft))
+    assert result.draft is not None
     assert result.redactions == [] and result.draft.case_note == draft.case_note
 
 

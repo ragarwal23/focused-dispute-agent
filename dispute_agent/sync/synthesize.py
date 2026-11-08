@@ -164,6 +164,7 @@ def run_synthesize(
     events, rules = [e.event_id for e in derived.evidence_events], [r.section_id for r in synced.rules]
     seed = render_case(category, rep_message, account, derived, policy, synced)
     errors: list[str] = []
+    attempt, draft = 0, None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             draft = synthesize(seed, model, config, draft_schema(events, rules))
@@ -177,6 +178,7 @@ def run_synthesize(
                 return SynthesisResult(errors=errors, attempts=attempt)
             seed += (f"\n\nPrevious draft rejected: {type(exc).__name__}: {str(exc)[:300]}\n"
                      f"Cite only these event IDs: {json.dumps(events)} and these section IDs: {json.dumps(rules)}.")
+    assert draft is not None  # the loop above breaks with a draft or returns; outside the try so it is not swallowed
     try:
         # the prose: another customer's account ID, event ID or payment reference must not reach the rep's note
         account_id = account_id or (derived.evidence_events[0].account_id if derived.evidence_events else None)

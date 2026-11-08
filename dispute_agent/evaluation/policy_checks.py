@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 from datetime import date, datetime, time, timedelta
-from typing import Literal
+from typing import Literal, cast
 
 from dispute_agent.account_agent.derive import DerivedFacts, derive_states
 from dispute_agent.config import WORLD_TODAY
@@ -142,7 +142,7 @@ def return_fee_valid(ds: Dataset, account_id: str, derived: DerivedFacts) -> Ver
     fees = [c for c in ds.chain_of(derived.disputed_event_id) if c.type == "fee_assessed" and c.related_event_id]
     if not fees:
         return "unknown"
-    parent = ds.events[fees[0].related_event_id]
+    parent = ds.events[cast(str, fees[0].related_event_id)]  # the filter above kept only fees with this ID
     return _verdict(parent.type == "payment_returned" and fees[0].amount == RETURN_FEE)
 
 

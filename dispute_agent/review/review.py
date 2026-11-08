@@ -13,6 +13,7 @@ The eval never pauses for a person: `orchestrator.run.investigate` answers every
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from pydantic import BaseModel, model_validator
@@ -65,7 +66,7 @@ class Pause(BaseModel):
 APPROVE = ReviewDecision(action="approve")
 
 
-def build_request(s: dict[str, Any], label: str, max_followups: int, existing_case_id: str | None) -> ReviewRequest:
+def build_request(s: Mapping[str, Any], label: str, max_followups: int, existing_case_id: str | None) -> ReviewRequest:
     """Render the pause payload from graph state. Reads only: the review node re-runs this on every resume."""
     route, draft = s["synthesis"].route, s["synthesis"].draft
     return ReviewRequest(

@@ -10,15 +10,17 @@ trace in LangSmith: `dispute <label>`, then `dispute <label> resume` for each re
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.types import Command
 
 from dispute_agent.account_agent.derive import DerivedFacts
 from dispute_agent.data import Category, Dataset
-from dispute_agent.orchestrator.graph import GraphState, build_graph, initial_graph_state
+from dispute_agent.orchestrator.graph import build_graph, initial_graph_state
 from dispute_agent.policy_agent.agent import PolicyFindings
 from dispute_agent.policy_agent.retrieve import PolicySection
 from dispute_agent.review.create_review_case import CaseResult
@@ -43,7 +45,7 @@ class Investigation:
     thread_id: str = ""
 
     @classmethod
-    def from_state(cls, s: GraphState, thread_id: str = "") -> Investigation:
+    def from_state(cls, s: Mapping[str, Any], thread_id: str = "") -> Investigation:
         return cls(
             s["category"], s["account"], s["derived"], s["policy"], s["sync"], s["synthesis"], s["case"],
             s["review"], s["followups"], thread_id,
@@ -55,8 +57,9 @@ def new_thread_id(label: str) -> str:
     return f"{label}-{datetime.now(timezone.utc):%Y%m%dT%H%M%S%fZ}"
 
 
-def thread_config(thread_id: str, tags: list[str] | None = None, run_name: str | None = None) -> dict[str, Any]:
-    return {"configurable": {"thread_id": thread_id}, "tags": tags or [], "run_name": run_name}
+def thread_config(thread_id: str, tags: list[str] | None = None, run_name: str | None = None) -> RunnableConfig:
+    # a cast because RunnableConfig types run_name as str, and None is what LangGraph receives when there is no name
+    return cast(RunnableConfig, {"configurable": {"thread_id": thread_id}, "tags": tags or [], "run_name": run_name})
 
 
 def _outcome(final: dict[str, Any], thread_id: str) -> Investigation | Pause:

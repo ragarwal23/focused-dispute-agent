@@ -10,7 +10,7 @@ from dispute_agent.account_agent.derive import derive_states
 from dispute_agent.config import WORLD_TODAY
 from dispute_agent.data import Scenario
 from dispute_agent.policy_agent.agent import (
-    NO_FACTS_YET, POLICY_SYSTEM, PolicyReading, RuleReading, check_citations, render_seed, run_policy_agent,
+    NO_FACTS_YET, POLICY_SYSTEM, Outcome, PolicyReading, RuleReading, check_citations, render_seed, run_policy_agent,
 )
 from dispute_agent.policy_agent.retrieve import candidates, search_policy
 from test_derive import DEV_IDS
@@ -25,7 +25,7 @@ def facts(ds, s):
     return findings, derive_states(findings, s.expected_category, s.account_id, ds)
 
 
-def rule(section_id, outcome="fee_adjustment_review"):
+def rule(section_id, outcome: Outcome = "fee_adjustment_review"):
     return RuleReading(section_id=section_id, condition="x", outcome=outcome, why="x", policy_ambiguous=False)
 
 

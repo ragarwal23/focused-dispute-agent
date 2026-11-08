@@ -167,7 +167,8 @@ def narrate(ns: tuple[str, ...], mode: str, data: Any) -> list[dict[str, Any]]:
 
     if payload.get("interrupts"):  # review paused: the pause event, not a finished step, closes it
         return []
-    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    raw = payload.get("result")
+    result: dict[str, Any] = raw if isinstance(raw, dict) else {}
     if payload.get("error"):
         return [_event("end", tid, name, f"{_text(step.start, {}) or name}: failed", step.owner, parent, str(payload["error"]))]
     events = []

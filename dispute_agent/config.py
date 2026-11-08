@@ -22,4 +22,4 @@ def make_model(effort: str | None = None) -> ChatAnthropic:
     # Adaptive thinking counts against max_tokens, so 16k. langchain-anthropic merges a constructor
     # output_config with the `format` that with_structured_output(method="json_schema") binds.
     extra = {"output_config": {"effort": effort}} if effort else {}
-    return ChatAnthropic(model=MODEL_ID, max_tokens=16000, **extra)
+    return ChatAnthropic(model=MODEL_ID, max_tokens=16000, **extra)  # pyright: ignore[reportCallIssue]  # field aliases

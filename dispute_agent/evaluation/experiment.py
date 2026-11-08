@@ -157,7 +157,7 @@ def public_links(client: Any, experiment_name: str) -> tuple[str, dict[str, str]
     project_id = client.read_project(project_name=experiment_name).id
     url = f"{base}/compare?selectedSessions={project_id}"
     runs = client.list_runs(project_id=project_id, is_root=True)
-    return url, {(r.inputs or {}).get("scenario_id"): f"{url}&trace={r.trace_id}&peeked_trace_id={r.trace_id}" for r in runs}
+    return url, {str((r.inputs or {}).get("scenario_id")): f"{url}&trace={r.trace_id}&peeked_trace_id={r.trace_id}" for r in runs}
 
 
 def sync_langsmith(eval_path: Path, judge_path: Path | None = None, client: Any = None, evaluate_fn: Any = None) -> int:

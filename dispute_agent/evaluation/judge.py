@@ -68,7 +68,8 @@ class JudgeScores(BaseModel):
 def make_judge_model() -> Any:
     from langchain_anthropic import ChatAnthropic
 
-    return ChatAnthropic(model=JUDGE_MODEL_ID, max_tokens=4000).with_structured_output(JudgeScores, method="json_schema")
+    model = ChatAnthropic(model=JUDGE_MODEL_ID, max_tokens=4000)  # pyright: ignore[reportCallIssue]  # field aliases
+    return model.with_structured_output(JudgeScores, method="json_schema")
 
 
 def _wrap(text: str | None) -> str | None:
@@ -159,7 +160,7 @@ def read_labels(path: Path) -> dict[str, dict[str, int | None]]:
         header = [str(h) for h in next(rows)]
         out = {}
         for raw in rows:
-            row = dict(zip(header, raw))
+            row: dict[str, Any] = dict(zip(header, raw))
             if not row.get("scenario_id"):
                 break
             out[row["scenario_id"]] = {a: (int(row[a]) if row.get(a) not in (None, "") else None) for a in JUDGE_AXES}

@@ -77,6 +77,7 @@ def style_header(ws, row: int = 1) -> None:
 def write_golden(cases: list[Case], path: Path = GOLDEN_XLSX) -> None:
     wb = Workbook()
     idx = wb.active
+    assert idx is not None  # a new Workbook always has one sheet
     idx.title = INDEX_SHEET
     idx.append(INDEX_COLS)
     style_header(idx)
@@ -117,7 +118,7 @@ def read_golden(path: Path = GOLDEN_XLSX) -> list[Case]:
         header = [str(h) for h in next(rows)]
         cases = []
         for raw in rows:
-            row = dict(zip(header, raw))
+            row: dict[str, Any] = dict(zip(header, raw))
             if not row.get("scenario_id"):
                 break
             values = {name: row[name] for name in IDENTITY_FIELDS}
@@ -150,8 +151,8 @@ def _index_diffs(ds: Dataset, path: Path) -> list[str]:
         header = [str(h) for h in next(rows)]
         diffs = []
         for raw in rows:
-            row = dict(zip(header, raw))
-            s = ds.scenarios.get(row.get("scenario_id"))
+            row: dict[str, Any] = dict(zip(header, raw))
+            s = ds.scenarios.get(row.get("scenario_id") or "")
             if s is None:
                 break
             for name in INDEX_COLS[2:]:
@@ -214,7 +215,7 @@ PRODUCERS = {"golden_echo": golden_echo, "empty_stub": empty_stub}
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="python -m dispute_agent.evaluation.golden", description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(prog="python -m dispute_agent.evaluation.golden", description=(__doc__ or "").splitlines()[0])
     p.add_argument("--data", default="data")
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--build", action="store_true", help=f"rewrite {GOLDEN_PATH}")

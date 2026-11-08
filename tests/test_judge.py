@@ -1,6 +1,7 @@
 """The judge: what it is shown, a fake model's scores, the quote rule, retry then error, no draft, and the agreement check."""
 
 import json
+from typing import Literal
 
 import pytest
 from pydantic import ValidationError
@@ -17,7 +18,7 @@ from test_report import normal_row, null_draft_row
 CASES = {c.scenario_id: c for c in read_golden()}
 
 
-def full_scores(score=3, quote="q"):
+def full_scores(score: Literal[0, 1, 2, 3] = 3, quote="q"):
     return JudgeScores(**{a: AxisScore(score=score, reason="r", quote=quote) for a in JUDGE_AXES})
 
 
@@ -55,7 +56,7 @@ def test_quote_required_below_3():
         AxisScore(score=2, reason="x")
     assert AxisScore(score=3, reason="x").quote == "" and AxisScore(score=0, reason="x", quote="bad span").score == 0
     with pytest.raises(ValidationError):
-        AxisScore(score=4, reason="x", quote="q")
+        AxisScore(score=4, reason="x", quote="q")  # pyright: ignore[reportArgumentType]
 
 
 def test_retry_then_error(ds):
@@ -89,7 +90,7 @@ def judge_rows(**per_sid):
 
 def test_agreement_math():
     judge = judge_rows(**{"S-01": 3, "S-02": 1, "S-03": 2}) | {"S-05": {"judge_error": "boom"}}
-    labels = {sid: {a: h for a in JUDGE_AXES} for sid, h in (("S-01", 3), ("S-02", 3), ("S-03", 1), ("S-05", 2))}
+    labels: dict[str, dict[str, int | None]] = {sid: {a: h for a in JUDGE_AXES} for sid, h in (("S-01", 3), ("S-02", 3), ("S-03", 1), ("S-05", 2))}
     ag = agreement(judge, labels)
     a = ag["no_invented_facts"]
     assert a["n"] == 3 and a["exact"] == 0.33 and a["within_1"] == 0.67 and a["judge_mean"] == 2.0 and a["human_mean"] == 2.33
@@ -120,7 +121,7 @@ def test_labels_build_check_and_exit_codes(ds, tmp_path, capsys):
     header = [c.value for c in ws[1]]
     for r, scores in ((2, (3, 3, 3, 3)), (3, (3, 0, 0, 1))):
         for axis, s in zip(JUDGE_AXES, scores):
-            ws.cell(row=r, column=header.index(axis) + 1).value = s
+            ws.cell(row=r, column=header.index(axis) + 1).value = s  # pyright: ignore[reportAttributeAccessIssue]
     wb.save(labels_path)
     assert calibrate_check(judge_path, labels_path) == 0  # n < 6 per axis: no axis can fail the threshold
     out = capsys.readouterr().out

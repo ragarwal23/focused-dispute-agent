@@ -45,7 +45,7 @@ def test_decision_shapes():
     for bad in ({"action": "override", "route": "manual_escalation"}, {"action": "override", "reason": "r"},
                 {"action": "answer"}, {"action": "approve", "answer": "x"}, {"action": "approve", "route": "explain_events"}):
         with pytest.raises(ValidationError):
-            ReviewDecision(**bad)
+            ReviewDecision(**bad)  # pyright: ignore[reportArgumentType]
 
 
 @pytest.mark.parametrize("route,followups,expected", [
@@ -68,12 +68,14 @@ def test_pause_payload_s02(ds, sections):
     r = out.request
     assert r.thread_label == "S-02" and r.route == "adjustment_review" and r.can_answer is False and r.existing_case_id is None
     assert not {"gate_rejected", "gate_reasons"} & set(r.model_dump())
+    assert r.draft is not None
     assert r.draft["review_route"] == "adjustment_review" and r.followups == 0
     assert thread_status(graph, "t-s02") == "paused"
 
 
 def test_pause_payload_s15(ds, sections):
     out = start(graph_for(ds, sections, "S-15", s15_agent(ds)), "A-1016", ds.scenarios["S-15"].rep_message, "t-s15", [], "S-15")
+    assert isinstance(out, Pause)
     assert out.request.route == "need_more_evidence" and out.request.can_answer is True
     assert out.request.open_questions == ["which refund?"]
 
@@ -83,8 +85,10 @@ def test_pause_shows_open_duplicate_s11(ds, sections):
     s = ds.scenarios["S-11"]
     graph = graph_for(ds, sections, "S-11", FakeAccountAgent(account_state(oracle_findings(s))))
     out = start(graph, s.account_id, s.rep_message, "t-s11", [], "S-11")
+    assert isinstance(out, Pause)
     assert out.request.existing_case_id == "C-002"
     done = resume(graph, "t-s11", APPROVE, [], "S-11")
+    assert isinstance(done, Investigation)
     assert done.case.case_id == "C-002" and done.case.created is False
 
 
@@ -107,6 +111,7 @@ def test_answer_reruns_account_agent_once(ds, sections):
     assert order == NORMAL[:-1] + FOLLOWUP + ["create_review_case"]
     assert agent.calls == 2 and policy_model.calls == 1
     assert final["followups"] == 1 and final["review"].action == "approve"
+    assert ANSWER.answer is not None
     assert final["rep_message"].endswith("Rep follow-up (after review): " + ANSWER.answer) and final["rep_answer"] == ANSWER.answer
     assert final["derived"].disputed_event_id == "E-0138" and final["derived"].fact_ambiguous is False
 
