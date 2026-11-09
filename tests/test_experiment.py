@@ -96,8 +96,8 @@ def test_feedback_keys_are_the_13(ds, tmp_path):
     assert [f["key"] for f in axes] == list(METRIC_NAMES[:8]) and axes[0] == {"key": "route", "score": 1.0, "value": "PASS"}
     assert axes[-1] == {"key": "score", "score": 1.0, "value": "6/6"} and axes_feedback(rows["S-02"])["results"][6]["value"] == "FAIL"
     judged = judge_feedback(judge_data(tmp_path)["rows"]["S-01"])["results"]
-    assert [f["key"] for f in judged] == list(METRIC_NAMES[8:]) and judged[3] == {"key": "no_leaks_or_promises", "score": 1 / 3, "value": 1, "comment": "r"}
-    assert judged[-1] == {"key": "judge_mean", "score": 2.25 / 3, "value": 2.25}
+    assert [f["key"] for f in judged] == list(METRIC_NAMES[8:]) and judged[3] == {"key": "no_leaks_or_promises", "score": 0.0, "value": "FAIL", "comment": "1/3: r"}
+    assert judged[0]["value"] == "PASS" and judged[-1] == {"key": "judge_passed", "score": 0.5, "value": "2/4"}
     err = judge_feedback({"judge_error": "boom"})["results"]
     assert err[0] == {"key": "no_invented_facts", "score": None, "value": "ERR", "comment": "boom"} and err[-1]["value"] is None
     assert axes_feedback(None) == {"results": []} and judge_feedback(None) == {"results": []}

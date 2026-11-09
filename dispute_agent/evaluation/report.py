@@ -25,7 +25,7 @@ from dispute_agent.evaluation.experiment import public_links
 from dispute_agent.evaluation.golden import GOLDEN_XLSX, HEADER_FILL, HEADER_FONT, WRAP, Case, cell, read_golden
 from dispute_agent.evaluation.judge import SCALE_TEXT, agreement, read_labels
 from dispute_agent.evaluation.metrics import (
-    AXES, JUDGE_AXES, SLICE_KEYS, compare, directional, grade, judge_mean, judge_scores, judge_verdict, pass_counts,
+    AXES, JUDGE_AXES, SLICE_KEYS, compare, directional, grade, judge_passed, judge_scores, judge_verdict, pass_counts,
     row_verdicts, score_str, slice_table,
 )
 
@@ -34,7 +34,7 @@ CASE_COLS = [
     "#", "scenario_id", "split", "trap", "wording", "note_driven", "complaint", "golden_route", "actual_route",
     "golden_disputed", "actual_disputed", "policy_consistent", "case_created", "status",
 ]
-MATRIX_COLS = ["Q", "Trap", "Wording", "Note", *AXES, "Grade", "Score", *JUDGE_AXES, "Judge mean", "P1-P7"]
+MATRIX_COLS = ["Q", "Trap", "Wording", "Note", *AXES, "Grade", "Score", *JUDGE_AXES, "Judge passed", "P1-P7"]
 LABEL_COLS = ["scenario_id", "trap", "complaint", "expected_route", "rationale", "actual_route", "case_note", "open_questions", *JUDGE_AXES, "notes"]
 FORBIDDEN_CITED = "forbidden_event_ids / cited anywhere by the Account Agent"
 FIELD_AXIS = {  # which axis governs each golden field's verdict cell
@@ -43,7 +43,7 @@ FIELD_AXIS = {  # which axis governs each golden field's verdict cell
     "policy_ids / policy_source_ids": "policy",
 }
 NO_DRAFT = "(no draft)"
-FILLS = {"PASS": "C6EFCE", "PARTIAL": "FFEB9C", "FAIL": "FFC7CE", "ERR": "D9D9D9", "improved": "C6EFCE", "regressed": "FFC7CE"}
+FILLS = {"PASS": "C6EFCE", "FAIL": "FFC7CE", "ERR": "D9D9D9", "improved": "C6EFCE", "regressed": "FFC7CE"}
 
 
 def load_eval(path: Path) -> dict[str, Any]:
@@ -167,7 +167,7 @@ def write_scenario_sheet(wb: Workbook, case: Case, row: dict[str, Any] | None, j
         ws.append([name, None, value if row and "exception" not in row else None])
     if judge is not None:
         ws.append([])
-        _append_header(ws, ["Judge", "score", "reason", "quote"])
+        _append_header(ws, ["Judge", "verdict", "reason", "quote"])
         judged = judge["rows"].get(case.scenario_id)
         if judged is None:
             ws.append(["not judged"])
@@ -176,8 +176,9 @@ def write_scenario_sheet(wb: Workbook, case: Case, row: dict[str, Any] | None, j
             fill(ws.cell(row=ws.max_row, column=1), "ERR")
         else:
             for axis in JUDGE_AXES:
-                ws.append([axis, judged[axis]["score"], judged[axis]["reason"], judged[axis]["quote"]])
-                fill(ws.cell(row=ws.max_row, column=2), judge_verdict(judged[axis]["score"]))
+                verdict = judge_verdict(judged[axis]["score"])
+                ws.append([axis, verdict, judged[axis]["reason"], judged[axis]["quote"]])
+                fill(ws.cell(row=ws.max_row, column=2), verdict)
     for col, width in zip("ABCD", (28, 60, 60, 50)):
         ws.column_dimensions[col].width = width
     for r in ws.iter_rows(min_row=3):
@@ -205,10 +206,11 @@ def matrix_row(case: Case, row: dict[str, Any] | None, judge: dict[str, Any] | N
         return base + [None] * len(AXES) + ["PENDING", None] + [None] * (len(JUDGE_AXES) + 2)
     verdicts = row_verdicts(row)
     scores: dict[str, int | None] = judge_scores(judge["rows"].get(case.scenario_id)) if judge else {a: None for a in JUDGE_AXES}
-    judge_cells = [("ERR" if judge and s is None else s) for s in scores.values()]
+    judge_cells = [judge_verdict(s) if judge else None for s in scores.values()]
+    passed = judge_passed(scores)
     cons = "—" if "exception" in row else consistent(row)
     return base + [verdicts[a] for a in AXES] + [grade(verdicts), score_str(verdicts)] + judge_cells + [
-        judge_mean(scores) if judge else None, cons,
+        None if passed is None else "%d/%d" % passed, cons,
     ]
 
 
@@ -217,15 +219,16 @@ def write_matrix(wb: Workbook, cases: list[Case], rows: dict[str, dict[str, Any]
     _append_header(ws, MATRIX_COLS)
     for case in cases:
         ws.append(matrix_row(case, rows.get(case.scenario_id), judge))
-        for c in ws[ws.max_row]:  # verdict strings fill as themselves; a 0-3 judge score fills by its verdict
-            fill(c, judge_verdict(c.value) if isinstance(c.value, int) and not isinstance(c.value, bool) else c.value)
+        for c in ws[ws.max_row]:  # verdict strings fill as themselves
+            fill(c, c.value)
     present = [rows[c.scenario_id] for c in cases if c.scenario_id in rows]
     counts = pass_counts(present)
     judged = [judge_scores(judge["rows"].get(r["scenario_id"])) for r in present] if judge else []
-    mean = lambda v: round(sum(v) / len(v), 2) if v else None  # noqa: E731
-    axis_means = [mean([j[axis] for j in judged if j[axis] is not None]) for axis in JUDGE_AXES]
+    count = lambda v: "%d/%d" % (sum(v), len(v)) if v else None  # noqa: E731  # PASS count over the judged rows
+    axis_counts = [count([judge_verdict(j[axis]) == "PASS" for j in judged if j[axis] is not None]) for axis in JUDGE_AXES]
+    all_four = [p[0] == p[1] for p in map(judge_passed, judged) if p is not None]
     _append_header(ws, ["total", None, None, None] + ["%d/%d" % counts[a] for a in AXES] + ["%d/%d" % counts["grade"], None]
-                   + axis_means + [mean([m for m in map(judge_mean, judged) if m is not None]), None])
+                   + axis_counts + [count(all_four), None])
     ws.append([])
     _append_header(ws, ["expected \\ final route"])
     for line in confusion_lines([r for r in present if "checks" in r])[1:]:
@@ -272,9 +275,9 @@ def write_calibration(wb: Workbook, judge: dict[str, Any], labels: dict[str, dic
     if not any(a["n"] for a in ag.values()):
         ws.append(["no labels yet"])
         return
-    _append_header(ws, ["axis", "n", "exact", "within-1", "judge mean", "human mean"])
+    _append_header(ws, ["axis", "n", "agree", "judge PASS", "human PASS"])
     for axis, a in ag.items():
-        ws.append([axis, a["n"], a["exact"], a["within_1"], a["judge_mean"], a["human_mean"]])
+        ws.append([axis, a["n"], a["agree"], a["judge_pass"], a["human_pass"]])
     ws.append([])
     _append_header(ws, ["scenario", "axis", "judge", "human"])
     for axis, a in ag.items():
@@ -353,7 +356,7 @@ def write_report(
     wb.save(out)
 
 
-DOTS = {"PASS": "🟢", "PARTIAL": "🟡", "FAIL": "🔴", "PENDING": "⚪"}
+DOTS = {"PASS": "🟢", "FAIL": "🔴", "PENDING": "⚪"}
 MD_AXES = {  # each code axis as a plain question, for readers who will not open the workbook
     "route": "Right queue?", "disputed_event": "Found the charge?", "evidence": "Right evidence?",
     "policy": "Right policy?", "confidence": "Honest confidence?", "guardrails": "Guardrails held?",
@@ -369,10 +372,10 @@ def write_markdown(data: dict[str, Any], json_path: Path, cases: list[Case], out
     lines = [
         "# Evaluation results", "",
         f"The agent ran on all {len(cases)} test complaints. Code grades each check against the answer key: "
-        "🟢 pass · 🟡 partial · 🔴 fail. *Note quality* is the Opus judge's mean score for the case note, out of 3. "
+        "🟢 pass · 🔴 fail. *Note checks* is how many of the Opus judge's four checks on the case note pass. "
         "**Trace** opens every step the agent took, in LangSmith (public, no login).", "",
         f"**{counts['grade'][0]} of {counts['grade'][1]} complaints pass every check.**", "",
-        "| Complaint | Type | Trap | " + " | ".join(MD_AXES.values()) + " | Overall | Note quality | |",
+        "| Complaint | Type | Trap | " + " | ".join(MD_AXES.values()) + " | Overall | Note checks | |",
         "|---|---|---|" + ":-:|" * (len(AXES) + 2) + "---|",
     ]
     for case in cases:
@@ -380,13 +383,14 @@ def write_markdown(data: dict[str, Any], json_path: Path, cases: list[Case], out
         graded = row_verdicts(row) if row else None
         verdicts: Mapping[str, str] = graded if graded is not None else {a: "PENDING" for a in AXES}
         overall = grade(graded) if graded is not None else None
-        mean = judge_mean(judge_scores(judge["rows"].get(case.scenario_id))) if judge and row else None
+        passed = judge_passed(judge_scores(judge["rows"].get(case.scenario_id))) if judge and row else None
         trace = (links[1] if links else {}).get(case.scenario_id)
         lines.append("| " + " | ".join([
             case.scenario_id + (" *(held out)*" if case.split == "heldout" else ""), plain(case.expected_category),
             "—" if case.trap == "none" else plain(case.trap), *(DOTS[verdicts[a]] for a in AXES),
             f"{DOTS[overall or 'PENDING']} {overall or 'not run'}",
-            "—" if mean is None else f"{mean:.2f} / 3", f"[trace]({trace})" if trace else "",
+            "—" if passed is None else f"{DOTS['PASS' if passed[0] == passed[1] else 'FAIL']} {passed[0]}/{passed[1]}",
+            f"[trace]({trace})" if trace else "",
         ]) + " |")
     lines += ["", f"Generated from `{json_path.as_posix()}` by `python -m dispute_agent report --out {out.as_posix()}`."
               + (f" The whole run in LangSmith: [experiment]({links[0]})." if links else "")

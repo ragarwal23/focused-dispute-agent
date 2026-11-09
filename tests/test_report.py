@@ -119,7 +119,7 @@ def test_null_draft_row(workbook):
     assert t["forbidden_event_ids / cited anywhere by the Account Agent"] == ("E-0135", "E-0135")
     assert t["synth_errors"] == (None, "synthesize failed: parse")
     v = verdicts(workbook["S-07"])
-    assert v["route"] == "PARTIAL" and v["required_event_ids / cited_event_ids"] == "FAIL" and v["confidence"] == "FAIL"
+    assert v["route"] == "FAIL" and v["required_event_ids / cited_event_ids"] == "FAIL" and v["confidence"] == "FAIL"
     cases = {r[1]: r for r in workbook["Cases"].iter_rows(min_row=2, values_only=True)}
     assert cases["S-07"][8] == "manual_escalation" and cases["S-07"][11:] == ("ok", "yes", "OK")
 
@@ -155,9 +155,9 @@ def test_rejects_non_report(tmp_path, capsys):
 def test_matrix_and_slices(workbook):
     m = matrix(workbook)
     assert m["S-01"]["Grade"] == "PASS" and m["S-01"]["Score"] == "6/6" and m["S-01"]["P1-P7"] == "ok" and m["S-01"]["Note"] == "no"
-    assert m["S-07"]["route"] == "PARTIAL" and m["S-07"]["Grade"] == "FAIL" and m["S-07"]["Score"] == "2.5/6" and m["S-07"]["P1-P7"] == "ok"
+    assert m["S-07"]["route"] == "FAIL" and m["S-07"]["Grade"] == "FAIL" and m["S-07"]["Score"] == "2/6" and m["S-07"]["P1-P7"] == "ok"
     assert m["S-02"]["Grade"] == "FAIL" and m["S-02"]["P1-P7"] == "—" and m["S-03"]["Grade"] == "PENDING" and m["S-03"]["route"] is None
-    assert m["S-01"]["no_invented_facts"] is None and m["S-01"]["Judge mean"] is None
+    assert m["S-01"]["no_invented_facts"] is None and m["S-01"]["Judge passed"] is None
     assert m["total"]["route"] == "1/3" and m["total"]["Grade"] == "1/3" and m["total"]["guardrails"] == "2/3"
     ws = workbook["Verdict Matrix"]
     assert ws["E2"].fill.fgColor.rgb.endswith("C6EFCE") and ws["K3"].fill.fgColor.rgb.endswith("FFC7CE")
@@ -196,13 +196,13 @@ def test_judge_panel_and_err(ds, tmp_path, json_path):
     assert render(str(json_path), str(out), judge=str(judge_path)) == 0
     wb = openpyxl.load_workbook(out)
     panel = {r[0]: r[1:] for r in wb["S-01"].iter_rows(values_only=True) if r[0] in JUDGE_AXES}
-    assert panel["no_leaks_or_promises"] == (1, "r", "q") and panel["no_invented_facts"][0] == 3
+    assert panel["no_leaks_or_promises"] == ("FAIL", "r", "q") and panel["no_invented_facts"][0] == "PASS"
     s07 = [r for r in wb["S-07"].iter_rows(values_only=True) if r[0] == "ERR"]
     assert s07 == [("ERR", None, "RuntimeError: boom", None)]
     assert [r for r in wb["S-02"].iter_rows(values_only=True) if r[0] == "not judged"]
     m = matrix(wb)
-    assert m["S-01"]["no_leaks_or_promises"] == 1 and m["S-01"]["Judge mean"] == 2.25 and m["S-07"]["no_leaks_or_promises"] == "ERR" and m["S-07"]["Judge mean"] is None
-    assert m["total"]["no_leaks_or_promises"] == 1.0 and m["total"]["Judge mean"] == 2.25
+    assert m["S-01"]["no_leaks_or_promises"] == "FAIL" and m["S-01"]["Judge passed"] == "2/4" and m["S-07"]["no_leaks_or_promises"] == "ERR" and m["S-07"]["Judge passed"] is None
+    assert m["total"]["no_invented_facts"] == "1/1" and m["total"]["no_leaks_or_promises"] == "0/1" and m["total"]["Judge passed"] == "0/1"
     assert "Calibration" not in wb.sheetnames and {k: v for k, v in wb["Run"].iter_rows(values_only=True)}["judge_path"] == "claude-opus-5-5 via judge sidecar"
 
 
@@ -235,7 +235,7 @@ def test_calibration_sheet(ds, tmp_path, json_path, capsys):
     wb.save(labels_path)
     assert render(str(json_path), str(out), judge=str(judge_path), labels=str(labels_path)) == 0
     cal = [trim(r) for r in openpyxl.load_workbook(out)["Calibration"].iter_rows(values_only=True) if r[0]]
-    assert cal[0] == ("axis", "n", "exact", "within-1", "judge mean", "human mean") and cal[1] == ("no_invented_facts", 1, 1.0, 1.0, 3.0, 3.0)
+    assert cal[0] == ("axis", "n", "agree", "judge PASS", "human PASS") and cal[1] == ("no_invented_facts", 1, 1.0, 1, 1)
     assert ("S-01", "no_leaks_or_promises", 1, 3) in cal and ("S-01", "matches_rationale", 2, 3) in cal
 
 
@@ -260,6 +260,6 @@ def test_markdown_page(ds, tmp_path, monkeypatch, capsys):
     assert render(str(json_path), str(out), judge=str(judge_path)) == 0
     assert "no trace links" in capsys.readouterr().out
     lines = {l.split(" |")[0].strip("| "): l for l in out.read_text().splitlines() if l.startswith("| S-")}
-    assert len(lines) == 16 and "🟢 PASS" in lines["S-01"] and "2.25 / 3" in lines["S-01"] and "[trace]" not in lines["S-01"]
-    assert "🟡" in lines["S-07"] and "🔴 FAIL" in lines["S-07"] and "⚪ not run" in lines["S-03"]
+    assert len(lines) == 16 and "🟢 PASS" in lines["S-01"] and "🔴 2/4" in lines["S-01"] and "[trace]" not in lines["S-01"]
+    assert "🟡" not in out.read_text() and "/ 3" not in out.read_text() and "🔴 FAIL" in lines["S-07"] and "⚪ not run" in lines["S-03"]
     assert "*(held out)*" in lines["S-04 *(held out)*"] and "**1 of 3 complaints pass every check.**" in out.read_text()

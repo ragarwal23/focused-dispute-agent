@@ -1,8 +1,8 @@
 """Phase 2 metrics: the six axes over evaluate.py's checks, a grade and score per scenario, slices, before/after.
 
 Pure functions over eval JSON rows. The checks are evaluate.py's; an axis is a named grouping of them with a
-PASS / PARTIAL / FAIL verdict (the table in README.md). The four judge axes are scored 0-3 in judge.py and
-turned into verdicts here.
+PASS / FAIL verdict (the table in README.md). The four judge axes are scored 0-3 in judge.py and turned into
+PASS (3) / FAIL (0-2) verdicts here.
 """
 
 from __future__ import annotations
@@ -10,18 +10,23 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any, Literal
 
-Verdict = Literal["PASS", "PARTIAL", "FAIL"]
+Verdict = Literal["PASS", "FAIL"]
 AXES = ("route", "disputed_event", "evidence", "policy", "confidence", "guardrails")
 JUDGE_AXES = ("no_invented_facts", "matches_rationale", "ready_to_file", "no_leaks_or_promises")
-METRIC_NAMES = AXES + ("grade", "score") + JUDGE_AXES + ("judge_mean",)  # the 13; also the LangSmith feedback keys
+METRIC_NAMES = AXES + ("grade", "score") + JUDGE_AXES + ("judge_passed",)  # the 13; also the LangSmith feedback keys
 SLICE_KEYS = ("wording", "note_driven", "trap", "category", "route")
 SLICE_SOURCE = {"wording": "wording", "note_driven": "note_driven", "trap": "trap", "category": "category_expected", "route": "route_expected"}
 DIRECTIONAL_MAX = 6  # a slice this small is directional only (the brief)
-SCORE_VALUE = {"PASS": 1.0, "PARTIAL": 0.5, "FAIL": 0.0}
+SCORE_VALUE = {"PASS": 1.0, "FAIL": 0.0}
+JUDGE_PASS = 3  # a judge axis passes only on a full score
 
 
 def _ok(checks: dict[str, Any], key: str) -> bool:
     return checks.get(key) is True
+
+
+def _v(ok: bool) -> Verdict:
+    return "PASS" if ok else "FAIL"
 
 
 def axis_verdicts(checks: dict[str, Any] | None) -> dict[str, Verdict]:
@@ -29,33 +34,31 @@ def axis_verdicts(checks: dict[str, Any] | None) -> dict[str, Verdict]:
     if not checks:
         return {axis: "FAIL" for axis in AXES}
     no_draft = checks.get("draft_route") is None
-    # right only because there was no draft (the fallback escalation, not a decision) is PARTIAL
-    route: Verdict = "FAIL" if not _ok(checks, "route_ok") else "PARTIAL" if no_draft else "PASS"
-    req, forb, draft_ev = _ok(checks, "required_found"), _ok(checks, "forbidden_clear"), _ok(checks, "draft_events_ok")
-    evidence: Verdict = "FAIL" if no_draft or not (req and forb) else "PASS" if draft_ev else "PARTIAL"
-    pret, pcite, pforb, dpol = (_ok(checks, k) for k in ("policy_retrieved_ok", "policy_cited_ok", "policy_forbidden_clear", "draft_policy_ok"))
-    policy: Verdict = "FAIL" if no_draft or not (pret and pcite and pforb) else "PASS" if dpol else "PARTIAL"
+    # right only because there was no draft (the fallback escalation, not a decision) is a FAIL
+    route = _ok(checks, "route_ok") and not no_draft
+    evidence = not no_draft and all(_ok(checks, k) for k in ("required_found", "forbidden_clear", "draft_events_ok"))
+    policy = not no_draft and all(
+        _ok(checks, k) for k in ("policy_retrieved_ok", "policy_cited_ok", "policy_forbidden_clear", "draft_policy_ok"))
     # policy_consistent is absent from reports made before the gate was removed (v0.8); only an explicit False fails
     guard = all(_ok(checks, k) for k in ("category_ok", "action_ok", "trajectory_ok"))
     guard = guard and checks.get("policy_consistent") is not False
     return {
-        "route": route, "disputed_event": "PASS" if _ok(checks, "disputed_ok") else "FAIL", "evidence": evidence,
-        "policy": policy, "confidence": "PASS" if _ok(checks, "confidence_ok") else "FAIL",
-        "guardrails": "PASS" if guard else "FAIL",
+        "route": _v(route), "disputed_event": _v(_ok(checks, "disputed_ok")), "evidence": _v(evidence),
+        "policy": _v(policy), "confidence": _v(_ok(checks, "confidence_ok")), "guardrails": _v(guard),
     }
 
 
 def grade(verdicts: dict[str, Verdict]) -> Verdict:
-    values = [verdicts[a] for a in AXES]
-    return "FAIL" if "FAIL" in values else "PASS" if all(v == "PASS" for v in values) else "PARTIAL"
+    return _v(all(verdicts[a] == "PASS" for a in AXES))
 
 
-def score_value(verdicts: dict[str, Verdict]) -> float:
-    return sum(SCORE_VALUE[verdicts[a]] for a in AXES)
+def score_value(verdicts: dict[str, Verdict]) -> int:
+    """How many of the six axes PASS."""
+    return sum(verdicts[a] == "PASS" for a in AXES)
 
 
 def score_str(verdicts: dict[str, Verdict]) -> str:
-    return f"{score_value(verdicts):g}/{len(AXES)}"
+    return f"{score_value(verdicts)}/{len(AXES)}"
 
 
 def row_verdicts(row: dict[str, Any]) -> dict[str, Verdict]:
@@ -64,8 +67,8 @@ def row_verdicts(row: dict[str, Any]) -> dict[str, Verdict]:
 
 
 def judge_verdict(score: int | None) -> str:
-    """3 PASS, 2 PARTIAL, 0-1 FAIL; None (a judge error) is ERR."""
-    return "ERR" if score is None else "PASS" if score == 3 else "PARTIAL" if score == 2 else "FAIL"
+    """3 PASS, 0-2 FAIL; None (a judge error) is ERR."""
+    return "ERR" if score is None else "PASS" if score >= JUDGE_PASS else "FAIL"
 
 
 def judge_scores(judge_row: dict[str, Any] | None) -> dict[str, int | None]:
@@ -75,9 +78,10 @@ def judge_scores(judge_row: dict[str, Any] | None) -> dict[str, int | None]:
     return {axis: judge_row[axis]["score"] for axis in JUDGE_AXES}
 
 
-def judge_mean(scores: dict[str, int | None]) -> float | None:
+def judge_passed(scores: dict[str, int | None]) -> tuple[int, int] | None:
+    """(judge axes that PASS, axes scored); None when the judge errored or did not run."""
     present = [s for s in scores.values() if s is not None]
-    return round(sum(present) / len(present), 2) if present else None
+    return (sum(s >= JUDGE_PASS for s in present), len(present)) if present else None
 
 
 def slice_value(row: dict[str, Any], key: str) -> str:

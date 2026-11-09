@@ -90,9 +90,9 @@ def test_golden_echo_all_pass_16(ds, sections):
 
 
 def test_empty_stub_fails(ds, sections):
-    """An empty answer never grades PASS; its fallback route is right only where the key wants manual_escalation."""
+    """An empty answer fails every graded axis: a fallback route that happens to match the key is not a decision."""
     for case in read_golden():
         verdicts = axis_verdicts(score(case, empty_stub(ds, sections, case), ds))
         assert grade(verdicts) == "FAIL" and verdicts["evidence"] == "FAIL" and verdicts["confidence"] == "FAIL"
-        assert verdicts["route"] == ("PARTIAL" if case.expected_route == "manual_escalation" else "FAIL")
+        assert verdicts["route"] == "FAIL"
     assert set(PRODUCERS) == {"golden_echo", "empty_stub"}

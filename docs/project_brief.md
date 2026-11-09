@@ -113,7 +113,7 @@ The held-out four were run twice after tuning, with nothing changed between the 
 
 ### Metrics
 
-**Six code-graded axes**, each PASS, PARTIAL or FAIL per scenario:
+**Six code-graded axes**, each PASS or FAIL per scenario (no partial credit):
 
 | Axis | Checks |
 |---|---|
@@ -126,7 +126,7 @@ The held-out four were run twice after tuning, with nothing changed between the 
 
 The P1–P7 checks are plain Python over structured event fields. They need no answer key, so they can also score live cases, and they audit the hand-written labels: all 16 pass.
 
-**Four judge axes**, Opus scores each case note 0–3: no invented facts, matches the labeler's rationale, ready to file, no leaks or promises. The judge was calibrated against 12 hand-labelled dev notes and agreed within one point on every note.
+**Four judge axes**, each PASS or FAIL per case note: no invented facts, matches the labeler's rationale, ready to file, no leaks or promises. Opus scores 0–3 and only a 3 passes. The judge was calibrated against 12 hand-labelled dev notes and gave the same PASS / FAIL as the hand score on 83–100% of notes per axis; every disagreement was the judge being stricter.
 
 ### Process
 

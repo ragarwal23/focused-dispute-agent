@@ -4,8 +4,8 @@
                  golden_echo / empty_stub producers that score the key itself and an empty answer (no LLM)
     evaluate.py  run every scenario in a split and score it with its pass/fail checks (the `eval` command)
     policy_checks.py  our P1-P7 checks in code: audits the golden labels, and feeds the `policy_consistent` check
-    metrics.py   the six axes over those checks (PASS / PARTIAL / FAIL), grade, score, slices, before/after
-    judge.py     the Opus judge: four 0-3 scores on the case note (`judge`), and agreement with hand labels (`calibrate`)
+    metrics.py   the six axes over those checks (PASS / FAIL), grade, score, slices, before/after
+    judge.py     the Opus judge: four PASS / FAIL verdicts on the case note (`judge`), and agreement with hand labels (`calibrate`)
     report.py    one eval JSON next to golden.xlsx as a release workbook with verdicts and judge panels (`report`)
     experiment.py  the LangSmith dataset (created once, never deleted), `eval --experiment` and `judge --experiment`,
                  and `langsmith-sync` (replay an older eval JSON as an experiment)

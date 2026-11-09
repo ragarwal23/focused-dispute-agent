@@ -93,17 +93,18 @@ def test_agreement_math():
     labels: dict[str, dict[str, int | None]] = {sid: {a: h for a in JUDGE_AXES} for sid, h in (("S-01", 3), ("S-02", 3), ("S-03", 1), ("S-05", 2))}
     ag = agreement(judge, labels)
     a = ag["no_invented_facts"]
-    assert a["n"] == 3 and a["exact"] == 0.33 and a["within_1"] == 0.67 and a["judge_mean"] == 2.0 and a["human_mean"] == 2.33
-    assert a["disagreements"] == [("S-02", 1, 3), ("S-03", 2, 1)]
-    assert agreement_lines(ag)[1].split() == ["no_invented_facts", "3", "0.33", "0.67", "2.0", "2.33"]
+    # PASS/FAIL: S-01 judge PASS human PASS; S-02 judge FAIL human PASS; S-03 judge FAIL human FAIL (2 vs 1 agrees)
+    assert a["n"] == 3 and a["agree"] == 0.67 and a["judge_pass"] == 1 and a["human_pass"] == 2
+    assert a["disagreements"] == [("S-02", 1, 3)]
+    assert agreement_lines(ag)[1].split() == ["no_invented_facts", "3", "0.67", "1", "2"]
 
 
 def test_partial_labels():
     judge = judge_rows(**{"S-01": 3, "S-02": 2})
     labels = {"S-01": {a: 3 for a in JUDGE_AXES}, "S-02": {"no_invented_facts": None, "matches_rationale": 2, "ready_to_file": None, "no_leaks_or_promises": 2}}
     ag = agreement(judge, labels)
-    assert ag["no_invented_facts"]["n"] == 1 and ag["matches_rationale"]["n"] == 2 and ag["ready_to_file"]["within_1"] == 1.0
-    assert agreement(judge, {})["no_leaks_or_promises"] == {"n": 0, "exact": None, "within_1": None, "judge_mean": None, "human_mean": None, "disagreements": []}
+    assert ag["no_invented_facts"]["n"] == 1 and ag["matches_rationale"]["n"] == 2 and ag["ready_to_file"]["agree"] == 1.0
+    assert agreement(judge, {})["no_leaks_or_promises"] == {"n": 0, "agree": None, "judge_pass": 0, "human_pass": 0, "disagreements": []}
 
 
 def test_labels_build_check_and_exit_codes(ds, tmp_path, capsys):
@@ -125,4 +126,4 @@ def test_labels_build_check_and_exit_codes(ds, tmp_path, capsys):
     wb.save(labels_path)
     assert calibrate_check(judge_path, labels_path) == 0  # n < 6 per axis: no axis can fail the threshold
     out = capsys.readouterr().out
-    assert "below 75% within-1: none" in out and "matches_rationale" in out
+    assert "below 75% agreement: none" in out and "matches_rationale" in out

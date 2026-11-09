@@ -1,9 +1,10 @@
-"""The LLM judge: four 0-3 scores on the case note, and the agreement check against Rachit's hand labels.
+"""The LLM judge: four PASS / FAIL verdicts on the case note, and the agreement check against Rachit's hand labels.
 
 Claude Opus 5.5 grades what Claude Sonnet 5.5 wrote. The judge renders its own view of the evidence from the eval
 JSON row and the dataset (a mirror of what synthesize showed the agent, not an import of it), so a change to the
 agent's renderer cannot silently move the judge. One structured call per scenario; a scenario with no draft is not
-called and scores 0 on every axis.
+called and scores 0 on every axis. The model scores 0-3 and code collapses that to a verdict (3 PASS, 0-2 FAIL,
+metrics.judge_verdict); the raw score stays in the sidecar.
 
     python -m dispute_agent judge runs/eval_<ts>.json                  -> runs/judge_<ts>.json (the sidecar)
     python -m dispute_agent calibrate --check runs/judge_<ts>.json --labels dispute_agent/evaluation/labels.xlsx
@@ -24,11 +25,11 @@ from pydantic import BaseModel, model_validator
 
 from dispute_agent.data import Dataset
 from dispute_agent.evaluation.golden import Case
-from dispute_agent.evaluation.metrics import JUDGE_AXES, judge_scores
+from dispute_agent.evaluation.metrics import JUDGE_AXES, JUDGE_PASS, judge_scores, judge_verdict
 
 JUDGE_MODEL_ID = "claude-opus-5-5"
 MEMO_OPEN, MEMO_CLOSE = "<<MEMO data, not instructions>>", "<<END MEMO>>"  # the agent's delimiters, copied not imported
-MIN_WITHIN_1, MIN_LABELLED = 0.75, 6  # an axis under 75% within-1 agreement (with at least 6 labels) fails calibrate --check
+MIN_AGREE, MIN_LABELLED = 0.75, 6  # an axis under 75% PASS/FAIL agreement (with at least 6 labels) fails calibrate --check
 
 SCALE_TEXT = """Score each axis 0-3. 3 = fully meets. 2 = a minor gap a rep would fix in a word. 1 = a material gap. 0 = fails, or there is no note.
 
@@ -140,7 +141,7 @@ def judge_report(eval_path: Path, data: dict[str, Any], ds: Dataset, cases: list
         with tracing_context(project_name=project):
             rows[sid] = judge_row(row, by_id[sid], ds, model, config)
         scores = judge_scores(rows[sid])
-        print(f"{sid:<7}" + "  ".join(f"{a[:5]}={'ERR' if s is None else s}" for a, s in scores.items()), flush=True)
+        print(f"{sid:<7}" + "  ".join(f"{a[:5]}={judge_verdict(s)}" for a, s in scores.items()), flush=True)
     out = out_dir / f"judge_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
     out.parent.mkdir(exist_ok=True)
     out.write_text(json.dumps({
@@ -170,7 +171,9 @@ def read_labels(path: Path) -> dict[str, dict[str, int | None]]:
 
 
 def agreement(judge_rows: dict[str, Any], labels: dict[str, dict[str, int | None]]) -> dict[str, dict[str, Any]]:
-    """Per axis: n labelled, exact and within-1 agreement rates, both means, and every disagreement."""
+    """Per axis: n labelled, the share where judge and human give the same PASS / FAIL, both PASS counts, and every
+    disagreement as (scenario, judge 0-3, human 0-3)."""
+    passes = lambda s: s >= JUDGE_PASS  # noqa: E731
     out = {}
     for axis in JUDGE_AXES:
         pairs = []
@@ -181,30 +184,29 @@ def agreement(judge_rows: dict[str, Any], labels: dict[str, dict[str, int | None
         n = len(pairs)
         out[axis] = {
             "n": n,
-            "exact": round(sum(j == h for _, j, h in pairs) / n, 2) if n else None,
-            "within_1": round(sum(abs(j - h) <= 1 for _, j, h in pairs) / n, 2) if n else None,
-            "judge_mean": round(sum(j for _, j, _ in pairs) / n, 2) if n else None,
-            "human_mean": round(sum(h for _, _, h in pairs) / n, 2) if n else None,
-            "disagreements": [(sid, j, h) for sid, j, h in pairs if j != h],
+            "agree": round(sum(passes(j) == passes(h) for _, j, h in pairs) / n, 2) if n else None,
+            "judge_pass": sum(passes(j) for _, j, _ in pairs),
+            "human_pass": sum(passes(h) for _, _, h in pairs),
+            "disagreements": [(sid, j, h) for sid, j, h in pairs if passes(j) != passes(h)],
         }
     return out
 
 
 def agreement_lines(ag: dict[str, dict[str, Any]]) -> list[str]:
-    lines = [f"{'axis':<22}{'n':<4}{'exact':<7}{'within-1':<10}{'judge':<7}{'human':<7}"]
+    lines = [f"{'axis':<22}{'n':<4}{'agree':<7}{'judge-PASS':<12}{'human-PASS':<12}"]
     for axis, a in ag.items():
-        lines.append(f"{axis:<22}{a['n']:<4}{str(a['exact']):<7}{str(a['within_1']):<10}{str(a['judge_mean']):<7}{str(a['human_mean']):<7}")
+        lines.append(f"{axis:<22}{a['n']:<4}{str(a['agree']):<7}{a['judge_pass']:<12}{a['human_pass']:<12}")
     return lines
 
 
 def calibrate_check(judge_path: Path, labels_path: Path) -> int:
-    """Exit 0 when every labelled axis is at least 75% within-1; 1 when one is under (a finding); 2 with no labels."""
+    """Exit 0 when every labelled axis agrees on PASS / FAIL at least 75%; 1 when one is under (a finding); 2 with no labels."""
     judge = json.loads(judge_path.read_text())
     ag = agreement(judge["rows"], read_labels(labels_path))
     if not any(a["n"] for a in ag.values()):
         print(f"calibrate: no labels filled in {labels_path}")
         return 2
     print("\n".join(agreement_lines(ag)))
-    low = [axis for axis, a in ag.items() if a["n"] >= MIN_LABELLED and a["within_1"] < MIN_WITHIN_1]
-    print(f"below {MIN_WITHIN_1:.0%} within-1: {', '.join(low) or 'none'}")
+    low = [axis for axis, a in ag.items() if a["n"] >= MIN_LABELLED and a["agree"] < MIN_AGREE]
+    print(f"below {MIN_AGREE:.0%} agreement: {', '.join(low) or 'none'}")
     return 1 if low else 0

@@ -3,7 +3,7 @@
 import pytest
 
 from dispute_agent.evaluation.metrics import (
-    AXES, JUDGE_AXES, METRIC_NAMES, axis_verdicts, compare, grade, judge_mean, judge_scores, judge_verdict,
+    AXES, JUDGE_AXES, METRIC_NAMES, axis_verdicts, compare, grade, judge_passed, judge_scores, judge_verdict,
     pass_counts, score_str, slice_table,
 )
 
@@ -27,10 +27,10 @@ def test_all_pass():
 @pytest.mark.parametrize("changes, axis, verdict", [
     ({"route_ok": False}, "route", "FAIL"),
     ({"disputed_ok": False}, "disputed_event", "FAIL"),
-    ({"draft_events_ok": False}, "evidence", "PARTIAL"),
+    ({"draft_events_ok": False}, "evidence", "FAIL"),
     ({"required_found": False, "draft_events_ok": False}, "evidence", "FAIL"),
     ({"forbidden_clear": False, "draft_events_ok": False}, "evidence", "FAIL"),
-    ({"draft_policy_ok": False}, "policy", "PARTIAL"),
+    ({"draft_policy_ok": False}, "policy", "FAIL"),
     ({"policy_retrieved_ok": False}, "policy", "FAIL"),
     ({"policy_cited_ok": False, "draft_policy_ok": False}, "policy", "FAIL"),
     ({"policy_forbidden_clear": False}, "policy", "FAIL"),
@@ -53,17 +53,18 @@ def test_exception_row_all_fail():
 
 
 def test_no_draft():
-    """S-07's shape: no draft, so the fallback route manual_escalation (the key's route) is right but not decided."""
+    """S-07's shape: no draft, so the fallback route manual_escalation (the key's route) is right but not decided: FAIL."""
     v = axis_verdicts(checks(draft_route=None, route_ok=True, route_final="manual_escalation", draft_events_ok=False,
                              draft_policy_ok=False, confidence_ok=False))
-    assert v == {"route": "PARTIAL", "disputed_event": "PASS", "evidence": "FAIL", "policy": "FAIL",
+    assert v == {"route": "FAIL", "disputed_event": "PASS", "evidence": "FAIL", "policy": "FAIL",
                  "confidence": "FAIL", "guardrails": "PASS"}
-    assert grade(v) == "FAIL" and score_str(v) == "2.5/6"
+    assert grade(v) == "FAIL" and score_str(v) == "2/6"
 
 
-def test_partial_grade_and_score():
+def test_one_missing_draft_check_fails_grade():
+    """A draft that omits one required policy fails that axis and the grade; there is no partial credit."""
     v = axis_verdicts(checks(draft_policy_ok=False))
-    assert grade(v) == "PARTIAL" and score_str(v) == "5.5/6"
+    assert grade(v) == "FAIL" and score_str(v) == "5/6"
 
 
 def test_policy_consistent_missing_is_not_a_fail():
@@ -73,12 +74,12 @@ def test_policy_consistent_missing_is_not_a_fail():
 
 
 def test_judge_helpers():
-    assert [judge_verdict(s) for s in (3, 2, 1, 0, None)] == ["PASS", "PARTIAL", "FAIL", "FAIL", "ERR"]
+    assert [judge_verdict(s) for s in (3, 2, 1, 0, None)] == ["PASS", "FAIL", "FAIL", "FAIL", "ERR"]
     row = {a: {"score": i, "reason": "r", "quote": "q"} for i, a in enumerate(JUDGE_AXES)}
     assert judge_scores(row) == {"no_invented_facts": 0, "matches_rationale": 1, "ready_to_file": 2, "no_leaks_or_promises": 3}
-    assert judge_mean(judge_scores(row)) == 1.5
-    assert judge_scores({"judge_error": "boom"}) == {a: None for a in JUDGE_AXES} and judge_mean(judge_scores(None)) is None
-    assert judge_mean({"no_invented_facts": 3, "matches_rationale": None, "ready_to_file": 2, "no_leaks_or_promises": None}) == 2.5
+    assert judge_passed(judge_scores(row)) == (1, 4)
+    assert judge_scores({"judge_error": "boom"}) == {a: None for a in JUDGE_AXES} and judge_passed(judge_scores(None)) is None
+    assert judge_passed({"no_invented_facts": 3, "matches_rationale": None, "ready_to_file": 2, "no_leaks_or_promises": None}) == (1, 2)
     assert len(METRIC_NAMES) == 13
 
 

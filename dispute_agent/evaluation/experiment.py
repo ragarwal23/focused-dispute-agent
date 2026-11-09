@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from dispute_agent.evaluation.golden import Case, read_golden
 from dispute_agent.evaluation.metrics import (
-    AXES, JUDGE_AXES, SCORE_VALUE, grade, judge_mean, judge_scores, row_verdicts, score_str, score_value,
+    AXES, JUDGE_AXES, SCORE_VALUE, grade, judge_passed, judge_scores, judge_verdict, row_verdicts, score_str, score_value,
 )
 
 DATASET_NAME = "dispute-agent-golden"
@@ -80,7 +80,7 @@ def replay_output(row: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def axes_feedback(row: dict[str, Any] | None) -> dict[str, Any]:
-    """The six axis verdicts, grade and score as LangSmith feedback (score 1 / 0.5 / 0, value PASS / PARTIAL / FAIL)."""
+    """The six axis verdicts, grade and score as LangSmith feedback (score 1 / 0, value PASS / FAIL; score is the pass count)."""
     if row is None:
         return {"results": []}
     verdicts = row_verdicts(row)
@@ -92,17 +92,20 @@ def axes_feedback(row: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def judge_feedback(judge_row: dict[str, Any] | None) -> dict[str, Any]:
-    """The four judge scores (0-3, uploaded as score/3) with the judge's reason as the comment, plus the mean."""
+    """The four judge verdicts (PASS 1 / FAIL 0) with the raw 0-3 score and the judge's reason as the comment, plus
+    how many of the four passed."""
     if judge_row is None:
         return {"results": []}
     scores = judge_scores(judge_row)
     results = []
     for axis in JUDGE_AXES:
         s = scores[axis]
-        comment = judge_row.get("judge_error") if s is None else judge_row[axis]["reason"]
-        results.append({"key": axis, "score": None if s is None else s / 3, "value": "ERR" if s is None else s, "comment": comment})
-    mean = judge_mean(scores)
-    results.append({"key": "judge_mean", "score": None if mean is None else mean / 3, "value": mean})
+        comment = judge_row.get("judge_error") if s is None else f"{s}/3: {judge_row[axis]['reason']}"
+        v = judge_verdict(s)
+        results.append({"key": axis, "score": None if s is None else SCORE_VALUE[v], "value": v, "comment": comment})
+    passed = judge_passed(scores)
+    results.append({"key": "judge_passed", "score": None if passed is None else passed[0] / passed[1],
+                    "value": None if passed is None else "%d/%d" % passed})
     return {"results": results}
 
 
